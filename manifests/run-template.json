@@ -12,22 +12,14 @@
     "system_ram_bytes": null,
     "vram_ceiling_bytes": null
   },
-  "fork": {
-    "id": "",
-    "repository": "",
-    "source_sha": "",
-    "build_command_file": "",
-    "server_command_file": "",
-    "binary_sha256": "",
-    "loaded_libraries_file": ""
-  },
   "model": {
     "family": "",
     "artifact_url": "",
     "artifact_sha256": "",
-    "quant": "",
     "tokenizer_revision": "",
-    "draft_sha256": null
+    "draft_sha256": null,
+    "service_model_id": "",
+    "quant_or_dtype": ""
   },
   "workload": {
     "fixture_sha256": "",
@@ -57,5 +49,15 @@
     "benchy_json": null,
     "gpu_samples": "",
     "ram_samples": ""
+  },
+  "engine": {
+    "id": "",
+    "source_type": "",
+    "source_uri": "",
+    "source_revision_or_digest": "",
+    "install_record_file": "",
+    "launch_or_endpoint_record_file": "",
+    "runtime_digest": "",
+    "dependencies_file": ""
   }
 }

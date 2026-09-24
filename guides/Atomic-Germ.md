@@ -21,7 +21,7 @@ Compare `--guanaco-max-experts` values against actual RSS and page faults; `GUAN
 
 ### Separate UMA branch: `Atomic-Germ/llama.cpp`
 
-The [public branch](https://github.com/Atomic-Germ/llama.cpp/tree/feat/qwen38-moe-gpu-pill-streaming) is pinned here at `cd252aa7e0e01d74647eeaa3c9634ff23979ea06`. Its [`common/arg.cpp`](https://github.com/Atomic-Germ/llama.cpp/blob/cd252aa7e0e01d74647eeaa3c9634ff23979ea06/common/arg.cpp) defines `--gpu-pill` / `--no-gpu-pill` for UMA KV writeback, and [`src/llama-context.cpp`](https://github.com/Atomic-Germ/llama.cpp/blob/cd252aa7e0e01d74647eeaa3c9634ff23979ea06/src/llama-context.cpp) shows it requires operation offload. The author [reported](https://github.com/ggml-org/llama.cpp/discussions/24528) this branch worked only with UMA, Vulkan or HIP, and had been confirmed for Q36/Q38. This is **not Guanaco's CPU/NVMe resident-expert streaming mode**; benchmark it as a distinct UMA cohort.
+The [public branch](https://github.com/Atomic-Germ/llama.cpp/tree/feat/qwen38-moe-gpu-pill-streaming) is pinned here at `cd252aa7e0e01d74647eeaa3c9634ff23979ea06`. Its [`common/arg.cpp`](https://github.com/Atomic-Germ/llama.cpp/blob/cd252aa7e0e01d74647eeaa3c9634ff23979ea06/common/arg.cpp) defines `--gpu-pill` / `--no-gpu-pill` for UMA KV writeback, and [`src/llama-context.cpp`](https://github.com/Atomic-Germ/llama.cpp/blob/cd252aa7e0e01d74647eeaa3c9634ff23979ea06/src/llama-context.cpp) shows it requires operation offload. Treat this as a UMA/Vulkan/HIP-specific candidate; verify Q36/Q38 on the actual hardware. This is **not Guanaco's CPU/NVMe resident-expert streaming mode**; benchmark it as a distinct UMA cohort.
 
 | Model | UMA branch research template / boundary |
 | --- | --- |

@@ -1,131 +1,185 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "sources": [
     {
       "id": "upstream",
-      "repo": "ggml-org/llama.cpp",
-      "branch": "master",
-      "sha": "84e76d8a23162eca70490da131945ebec1f09bf4",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/ggml-org/llama.cpp.git",
+        "ref": "master",
+        "revision": "84e76d8a23162eca70490da131945ebec1f09bf4"
+      }
     },
     {
       "id": "leloch-v1",
-      "repo": "leloch/llama.cpp",
-      "branch": "moe-cache-pr",
-      "sha": "a01eb26468a6cb2bf2c3bfd1cc3b5d9e64daefcd",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/leloch/llama.cpp.git",
+        "ref": "moe-cache-pr",
+        "revision": "a01eb26468a6cb2bf2c3bfd1cc3b5d9e64daefcd"
+      }
     },
     {
       "id": "leloch-v2",
-      "repo": "leloch/llama.cpp",
-      "branch": "moe-cache-v2-pr",
-      "sha": "e3096b046bb809f7f80bc47801f6579aed1cbc60",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/leloch/llama.cpp.git",
+        "ref": "moe-cache-v2-pr",
+        "revision": "e3096b046bb809f7f80bc47801f6579aed1cbc60"
+      }
     },
     {
       "id": "lidenburg",
-      "repo": "Lidenburg/llama.cpp",
-      "branch": "moe-expert-caching",
-      "sha": "e85e4d90cd44a8c8332093b0c97a53fa13137f5e",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/Lidenburg/llama.cpp.git",
+        "ref": "moe-expert-caching",
+        "revision": "e85e4d90cd44a8c8332093b0c97a53fa13137f5e"
+      }
     },
     {
       "id": "generelschwerz",
-      "repo": "GenerelSchwerz/llama.cpp",
-      "branch": "moe-cache",
-      "sha": "e59a4b14ca9d681b7631d0d729baf95d1e2a3701",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/GenerelSchwerz/llama.cpp.git",
+        "ref": "moe-cache",
+        "revision": "e59a4b14ca9d681b7631d0d729baf95d1e2a3701"
+      }
     },
     {
       "id": "thecodacus",
-      "repo": "thecodacus/llama.cpp",
-      "branch": "perf",
-      "sha": "27c54b4bbcefadedcec6397477cc2e866c1db716",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/thecodacus/llama.cpp.git",
+        "ref": "perf",
+        "revision": "27c54b4bbcefadedcec6397477cc2e866c1db716"
+      }
     },
     {
       "id": "thetom",
-      "repo": "TheTom/llama-cpp-turboquant",
-      "branch": "feature/turboquant-kv-cache",
-      "sha": "a3d5603d110bda29222d2011596cdc84d7fa532d",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/TheTom/llama-cpp-turboquant.git",
+        "ref": "feature/turboquant-kv-cache",
+        "revision": "a3d5603d110bda29222d2011596cdc84d7fa532d"
+      }
     },
     {
       "id": "giveen-current",
-      "repo": "giveen/llama-cpp-turboquant",
-      "branch": "feature/turboquant-kv-cache",
-      "sha": "bcc337d69f4065cb37f2aa5bd17c34fed87bd6f4",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/giveen/llama-cpp-turboquant.git",
+        "ref": "feature/turboquant-kv-cache",
+        "revision": "bcc337d69f4065cb37f2aa5bd17c34fed87bd6f4"
+      }
     },
     {
       "id": "miltos22",
-      "repo": "miltos22/llama.cpp-wackMall-merge-request",
-      "branch": "master",
-      "sha": "6cacc5edbb2e265133491f0e4a5ba9a470f771a2",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/miltos22/llama.cpp-wackMall-merge-request.git",
+        "ref": "master",
+        "revision": "6cacc5edbb2e265133491f0e4a5ba9a470f771a2"
+      }
     },
     {
       "id": "atomic-germ",
-      "repo": "Atomic-Germ/llama.cpp",
-      "branch": "feat/qwen38-moe-gpu-pill-streaming",
-      "sha": "cd252aa7e0e01d74647eeaa3c9634ff23979ea06",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/Atomic-Germ/llama.cpp.git",
+        "ref": "feat/qwen38-moe-gpu-pill-streaming",
+        "revision": "cd252aa7e0e01d74647eeaa3c9634ff23979ea06"
+      }
     },
     {
       "id": "mclaudod",
-      "repo": "mclaudod/llama.cpp",
-      "branch": "moe-hot-cache",
-      "sha": "b5516876f10c7ceea1ba4695cdcdc80f71c71c5f",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/mclaudod/llama.cpp.git",
+        "ref": "moe-hot-cache",
+        "revision": "b5516876f10c7ceea1ba4695cdcdc80f71c71c5f"
+      }
     },
     {
       "id": "freetoken",
-      "repo": "FlashML-org/FreeToken",
-      "branch": "main",
-      "sha": "cee23bf44a86e48d70f8fda3ca3b6d4d9890072e",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/FlashML-org/FreeToken.git",
+        "ref": "main",
+        "revision": "cee23bf44a86e48d70f8fda3ca3b6d4d9890072e"
+      }
     },
     {
       "id": "ktransformers",
-      "repo": "kvcache-ai/ktransformers",
-      "branch": "main",
-      "sha": "c40722bf04c494f2492b7eb9e86ef01a4ede45b3",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/kvcache-ai/ktransformers.git",
+        "ref": "main",
+        "revision": "c40722bf04c494f2492b7eb9e86ef01a4ede45b3"
+      }
     },
     {
       "id": "buun",
-      "repo": "spiritbuun/buun-llama-cpp",
-      "branch": "master",
-      "sha": "2ef0317dd91e2ca4732fffa456dc5e2311db41c7",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/spiritbuun/buun-llama-cpp.git",
+        "ref": "master",
+        "revision": "2ef0317dd91e2ca4732fffa456dc5e2311db41c7"
+      }
     },
     {
       "id": "csantiago78",
-      "repo": "csantiago78/llama.cpp",
-      "branch": "moe-expert-cache",
-      "sha": "bccbacdb8945680f1cfc7e6bffd1e59014705750",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/csantiago78/llama.cpp.git",
+        "ref": "moe-expert-cache",
+        "revision": "bccbacdb8945680f1cfc7e6bffd1e59014705750"
+      }
     },
     {
       "id": "danielhanchen-mtp",
-      "repo": "danielhanchen/llama.cpp",
-      "branch": "qwen4exp/mtp",
-      "sha": "6fcaa16f4b360649933a54d1f91ad40ed35c0e11",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/danielhanchen/llama.cpp.git",
+        "ref": "qwen4exp/mtp",
+        "revision": "6fcaa16f4b360649933a54d1f91ad40ed35c0e11"
+      }
     },
     {
       "id": "guanaco",
-      "repo": "Atomic-Germ/Guanaco",
-      "branch": "main",
-      "sha": "8364229686d74ec7495d2e726268bb329e759e84",
-      "kind": "backend"
+      "kind": "engine",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/Atomic-Germ/Guanaco.git",
+        "ref": "main",
+        "revision": "8364229686d74ec7495d2e726268bb329e759e84"
+      }
     },
     {
       "id": "llama-benchy",
-      "repo": "eugr/llama-benchy",
-      "branch": "main",
-      "sha": "e9be344578cec17745066b220798b80a0d2686d3",
-      "kind": "tool"
+      "kind": "tool",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/eugr/llama-benchy.git",
+        "ref": "main",
+        "revision": "e9be344578cec17745066b220798b80a0d2686d3"
+      }
     }
   ]
 }

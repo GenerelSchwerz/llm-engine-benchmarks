@@ -1,27 +1,25 @@
-# Benchmark matrix
+# Suite model and workload matrix
 
-## Initial model families
+A suite can target **any** model family and engine. Define the exact model artifact, revision/hash, tokenizer, context length, quantization or dtype, prompt fixtures, sampling, output ceiling, concurrency, hardware cohort, and memory ceiling before running. Native checkpoints and converted artifacts are separate comparison tiers unless their lineage and weight equivalence are established. Mark unsupported engine/model pairs explicitly.
 
-| Model family | Why it is included | Artifact status |
+## Example MoE study
+
+The following candidates are examples, not required models:
+
+| Model family | Study interest | Artifact status |
 | --- | --- | --- |
-| Qwen3.6 35B A3B | Shared MoE baseline across several forks and FreeToken | Pin one GGUF and native checkpoint separately; do not assume weight equivalence |
-| Qwen3.8 Flash Next | Large MoE, PLE, MTP, and host-memory pressure | Pin GGUF quant and optional MTP sidecar separately |
-| DeepSeek V4 Flash | Large CPU-resident expert workload and multi-GPU comparison | Pin GGUF quant and DSpark availability per fork |
-| Gemma 4 26B A4B | Prior strong cache result | Artifact to pin |
-| Nemotron 3.5 Lightning 30B A3B | Different MoE expert layout | Artifact to pin |
-| GPT-OSS 20B | Prior cache regression control | Artifact to pin |
-| LFM2.5 8B A1B | Prior cache regression and grouped-certificate failure | Artifact to pin |
-| Ornith 1.5 35B A3B | Prior grouped path and fan-out result | Artifact to pin |
+| Qwen3.6 35B A3B | Shared MoE comparison | Pin GGUF and native checkpoint separately |
+| Qwen3.8 Flash Next | Large MoE and draft behavior | Pin exact quant and optional draft sidecar |
+| DeepSeek V4 Flash | CPU-resident experts and multi-GPU | Pin artifact and draft availability per engine |
+| Gemma 4 26B A4B, Nemotron 3.5 Lightning 30B A3B, GPT-OSS 20B, LFM2.5 8B A1B, Ornith 1.5 35B A3B | Broader regression coverage | Pin artifacts before admission |
 
-The first three families drive command-guide research because they are directly discussed in #24528. The remaining families refresh the older public sweep. A family enters a comparison only after a single exact model artifact and its provenance are selected for every compatible runtime.
+For a dense-model study, replace these rows entirely. The same runbook applies without cache or draft-specific legs.
 
-## Required legs for each supported fork/model pair
+## Required comparison dimensions
 
-1. Baseline placement or cache disabled, as the implementation defines it.
-2. Cache enabled with recorded capacity and actual cache/grouped-path counters.
-3. MTP or other drafting as a separate leg where both model and runtime support it.
-4. At least short-prompt single-request and long-prompt single-request runs; parallel requests where supported.
+1. A baseline configuration and any optimized configuration, with the engine's actual effective placement and settings recorded.
+2. Coherent generation on frozen prompts and a separate llama-benchy track where the protocol is supported or adapted.
+3. Short and sustained generation, plus concurrency where the engine supports it.
+4. An explicit status for every planned pair: `complete`, `failed`, `unsupported`, `unavailable`, or `not yet run`.
 
-Record the fork commit, executable and shared-library hashes, model and draft hashes, hardware and driver, full command and environment, prompt hash, request JSON, output and stop reason, prefill, TTFT, decode, wall time, RAM, loaded and peak VRAM, errors, and teardown. Use matched VRAM and workload before quoting speed ratios. One coherent completion is a prerequisite, not a quality study.
-
-Do not silently replace a missing leg with another fork, quant, model revision, or hardware cohort. Mark it `unsupported`, `unavailable`, `failed`, or `not yet run` with a reason.
+Record engine version, executable or image digest, model/draft hashes, hardware, full command and environment, prompt hash, request/response, prefill, TTFT, decode, wall time, memory, errors, and teardown. Optimization-specific counters such as cache hits or draft acceptance are required only when that optimization is claimed.

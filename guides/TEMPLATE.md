@@ -1,41 +1,29 @@
-# Fork name
+# Engine name
 
-Source: <repository and branch URL>
-Pinned commit: <full SHA>
-Upstream relationship: <parent repository>
+Source type and URL:
+Pinned revision, image digest, or service version:
 Guide status: research draft | CLI verified | model-run verified
 
-## Build and runtime
+## Install and verify
 
-Record exact build command, CUDA/backend version, executable path, required environment, and a `--help` capture from the pinned binary.
+Give exact, reproducible install/build instructions for this engine. Record runtime dependencies, backend/driver requirements, version command, executable or image digest, and any required credentials by name only. Do not publish secrets.
 
-## Qwen3.6 35B A3B
+## Launch, API, and teardown
 
-- Artifact and hash:
-- Support status and evidence:
-- Baseline command:
-- Optimized command:
-- Why each nonstandard option is used:
-- Known limits and validation status:
+Provide baseline and tuned launch commands, effective endpoint or CLI invocation, health/model-discovery checks, served model alias, and clean shutdown steps. If the engine is a remote service, record API version, region, service model ID, and relevant rate limits. Describe an OpenAI-compatible chat endpoint or the adapter needed for llama-benchy.
 
-## Qwen3.8 Flash Next
+## Models in this suite
 
-- Artifact and hash:
-- Support status and evidence:
-- Baseline command:
-- Optimized command:
-- Why each nonstandard option is used:
-- Known limits and validation status:
+For **each** supported model, record:
 
-## DeepSeek V4 Flash
+- Exact artifact, revision/hash, tokenizer, format, quantization or dtype, and context limit.
+- Model support status and source or binary evidence.
+- Baseline command and optimized command, including all environment settings.
+- Why each optimization or nondefault option is used; expected proof counters, if any.
+- Known failure modes and validation status.
 
-- Artifact and hash:
-- Support status and evidence:
-- Baseline command:
-- Optimized command:
-- Why each nonstandard option is used:
-- Known limits and validation status:
+Mark unsupported models and modes explicitly. Do not copy a command from another engine without verifying this engine's parser, model loader, and runtime behavior.
 
-## Additional sweep models
+## Both measurement methods
 
-Add the same six fields for Gemma 4, Nemotron, GPT-OSS, LFM2.5, and Ornith when support has been checked. An unsupported or unavailable entry must say why.
+Describe a coherent generation request using the suite's frozen fixture and an independent llama-benchy command against the same engine/model configuration. If llama-benchy needs a protocol adapter, give its source/version and mapping. If the engine cannot be adapted faithfully, mark that method unavailable and explain why. Record actual output length and complete text for both methods.

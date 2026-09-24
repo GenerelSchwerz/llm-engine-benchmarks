@@ -1,54 +1,47 @@
-# Cross-fork benchmark runbook
+# LLM engine benchmark runbook
 
-This is the top-level guide for collecting fork updates, preparing model-specific commands, running the two benchmark methods, and publishing verified results. Read the editable [source list](manifests/sources.json), [annotated inventory](manifests/forks.md), [model matrix](manifests/matrix.md), [tooling snapshot](manifests/tooling.md), and the relevant file in `guides/` before acting. At the 2026-09-24 collection snapshot, this workspace has only source and guide preparation; live model runs await a later user instruction.
+Use this guide for a reproducible comparison of any LLM inference engines. Start with the editable [source list](manifests/sources.json), [engine catalog](manifests/engines.md), [suite matrix](manifests/matrix.md), [tool pin](manifests/tooling.md), and the selected engine guides. The included MoE guides are research examples; no new live sweep is implied by them.
 
-## Roles and handoff
+## Fan-out, coalescing, and one runner
 
-One coordinating agent owns the suite revision and publication. Fork research fans out to subagents, with one fork per research assignment where practical. Research agents inspect source and documentation; they do not build or use the benchmark GPU. The coordinator coalesces their command packets into one frozen run plan. **Exactly one execution agent** then builds, runs, records, and evaluates all arms serially on a given machine. Do not let several agents launch servers or tune against the same GPU concurrently.
+A coordinator owns the suite revision and result publication. Research agents each review one engine and return [command packets](manifests/command-packet-template.md) for every assigned model and method. They do not consume the benchmark machine. The coordinator coalesces the packets into a frozen plan. **One execution agent per machine** handles installation, builds, runs, raw collection, and teardown serially under a machine-specific lock.
 
-### Fan-out after an update check
+1. Record the prior validated suite's engine versions, model/draft hashes, guide revisions, benchmark-tool version, prompt hashes, protocol-adapter versions, and hardware cohort.
+2. Create `manifests/suites/<suite-id>/`. Run `python scripts/check_sources.py --remote > manifests/suites/<suite-id>/source-check.json` for Git entries. For package, container, remote, and local entries, capture their version/digest with the verification command in their guide. Source checks are read-only.
+3. Fan out engine assignments with the old validated revision, observed current revision, models, previous guide, and hardware cohort.
+4. An agent may report `reuse` and the previously validated arguments **only if** engine revision, model artifact, tool, adapter, and hardware/workload cohort remain unchanged. It cites the exact prior command and result. An unchanged source alone is insufficient.
+5. If any input changes, report `review required`. Reinspect the relevant source or vendor documentation, build/install requirements, CLI/API schema, defaults, model support, and optimization behavior. Propose model-specific commands with references. A proposal remains a draft until the runner verifies the installed engine and completes a model run.
+6. The coordinator rejects packets missing an exact version, model artifact, method, full command/request, support status, memory target, or tuning rationale. It resolves conflicts in the guide and freezes accepted packets and artifact hashes. A later update creates a new suite revision.
 
-1. The coordinator records the last published suite revision, its fork SHAs, model/draft hashes, guide revisions, benchy commit, prompt hashes, and hardware cohort. Preserve the old manifest and results.
-2. Create `manifests/suites/<suite-id>/`, then run `python scripts/check_sources.py --remote > manifests/suites/<suite-id>/source-check.json` to check pinned local heads and tracking branches without moving them. A branch disappearing is an `unavailable` result, never a reason to silently switch branches.
-3. Assign each fork to a research agent. The assignment contains its exact old SHA, observed remote SHA, models in scope, previous guide, and hardware cohort.
-4. If the source SHA, model artifact, benchmark tool, and relevant hardware cohort are unchanged since the last **validated** run, the agent may report the previously validated args as `reuse`. It still checks the guide and reports the exact source of those args. **Only this unchanged case permits an unqualified "previously validated" claim.**
-5. If any of those inputs changed, the agent reports `review required`. It examines the commit diff, build files, CLI parser/help text in source, model support, cache/placement logic, and changed defaults. It updates its fork guide and proposes model-specific commands with code references. Those commands remain research drafts until the execution agent builds the pinned revision, captures its actual `--help`, and completes a model run.
-6. Every research agent returns one [command packet](manifests/command-packet-template.md) per fork/model/benchmark mode, including unsupported and failed-to-resolve pairs. Avoid one generic command for all models.
+The runner may return an invalid packet for revision; it does not improvise performance options during measurement.
 
-### Coalescing gate
+## Engine guide contract
 
-The coordinator checks that every candidate has an exact revision, model artifact, benchmark mode, per-model command, tuning rationale, and support status. It rejects a packet if flags are from another fork, the command uses a moving ref, a quant or checkpoint differs without an explicit comparison tier, or the memory target is not stated. Resolve conflicts in the fork guide before scheduling. Freeze the accepted packets and model hashes in a dated `manifests/suites/<suite-id>/` directory. An update after this point starts a *new* suite revision.
+Each selected engine needs an install/verify guide, exact version, model support table, baseline and tuned commands **per model**, launch/health/stop steps, endpoint or CLI behavior, and both measurement methods. Include runtime environment, GPU/CPU placement, batching, parallelism, KV/cache/draft settings only where relevant. Explain each optimization using source or vendor documentation. Mark unsupported pairs. An engine without a faithful OpenAI-compatible chat endpoint needs a documented adapter for llama-benchy; otherwise record that method as `unavailable` rather than reporting a substituted metric.
 
-The execution agent receives only that frozen plan. It may reject an invalid command and request a revised packet; it does not improvise performance flags during a measured run. It owns build isolation, a machine-specific single-GPU/process lock, warmup, request execution, raw collection, teardown, and the final result ledger.
+Git clones are installed from `manifests/sources.json` with `scripts/install_sources.py`; the manifest also supports non-Git entries with explicit installation notes. Never update a source checkout in the middle of a suite.
 
-## Fork-specific guide contract
+## Build, model, and calibration gates
 
-Every public runnable fork needs its own guide. The guide records a pinned branch and SHA, build/backend requirements, executable and library paths, model support, source-backed flags, known failure modes, a baseline and tuned server command **for each supported model**, and both benchmark methods. Explain why each optimization is chosen for that fork and model. Include cache size/placement, batching, KV type, host loading and pinning, speculative/draft settings, parallelism, and relevant environment variables. Mark unsupported models explicitly. Guides are research drafts until the runner records build, `--help`, and coherent output at that exact SHA.
+1. Save machine state, choose a lock, and ensure no competing workload uses the target resources. Keep each engine's build, libraries, container, or virtual environment separate. Record compiler/driver/backend and executable or image digest.
+2. Check the actual binary `--help`, API schema, or service version against the guide. Return rejected or changed options to research.
+3. Pin model and draft artifacts with URL/revision and SHA256 where files are available. Record tokenizer, chat template, quant/dtype, complete shards, and provenance. Keep native checkpoints and converted GGUFs in separate comparison tiers unless equivalence is established.
+4. Verify startup, health, memory fit, coherent completion, and any claimed optimization path before timing. An allocation or offload count alone is not proof that a cache or draft path executed.
+5. Tune in a separate calibration stage under a declared memory ceiling. Record every trial, including regressions. Freeze the winning full command and a suitable baseline before measured repeats.
 
-For an unchanged fork, reuse the last validated command only if its exact model, quant, machine cohort, workload, and tool revision also match. A different model or quant requires a separate command packet even when the fork SHA matches.
+## Method A: coherent generation
 
-## Build and model gates for a future live sweep
+Use frozen, nonprivate tasks from `fixtures/` or add suite-specific fixtures with hashes. Include at least a coding task and a technical explanation; use a long-context task when supported. Preserve exact request/invocation, streaming chunks when available, final text, token accounting, stop reason, prompt hash, and a short quality verdict with concrete defects. Incoherent, empty, truncated, or erroring output remains a result but cannot support a headline speed claim.
 
-1. Save the current machine state and ensure no benchmark server, profiler, or other GPU workload is active. Use a machine-specific lock so only one execution agent can operate it.
-2. Build each fork from its pinned source into its own `builds/<fork-id>/<sha>/` path. Record compiler, CUDA/driver, CMake options, build log, executable hash, and loaded shared-library hashes. Never mix libraries from sibling forks or reuse a build directory across SHAs.
-3. Capture that binary's `--help` and compare the guide's flags to it. A flag rejection or changed semantic returns the packet to research; it does not trigger an on-the-fly substitution.
-4. Pin model and draft artifacts with source URL/revision and SHA256. Check complete shard sets and tokenizer/chat template. Native checkpoints and converted GGUFs are distinct artifacts unless exact lineage and weight equivalence are established.
-5. For each fork/model, test startup, fit, coherent completion, and actual cache/grouped/draft-path telemetry before measuring speed. Record failures as outcomes. An allocation or offload count alone does not prove that the intended cache path ran.
-6. Tune in a separate calibration stage under a declared memory ceiling. Vary only documented knobs, record all trials including regressions, then freeze the winning *full command* before measured repeats. Retain stock-placement and cache-off controls where applicable. Do not assume the same cache count or `-ub` is optimal across forks or models.
+Match prompt, token ceiling, sampling, concurrency, context geometry, and hardware/memory cohort across comparisons. Engines may need different launch flags. Report TTFT, prefill, client-perceived decode, wall time, RAM, VRAM, and errors. Record cache/draft counters only for claims about those features. If engine outputs differ materially, treat speed differences as observational until quality is evaluated.
 
-## Method A: coherent-text workload
+## Method B: pinned llama-benchy
 
-Use frozen, nonprivate tasks from `fixtures/`. At minimum include a coding task and a systems explanation task; add a long-context task when the model and hardware support it. The response must complete the task coherently. Preserve exact request JSON, streamed response chunks, final text, any reasoning field, output-token accounting, stop reason, prompt hash, and a short human-readable quality verdict with concrete defects. A truncated, repetitive, empty, or erroring response remains in the results but cannot support a headline performance claim.
+Use the checkout pinned in [tooling.md](manifests/tooling.md). It sends OpenAI-compatible `/v1/chat/completions` requests. Verify the engine's endpoint and exact served model alias, or pin a protocol adapter and document its semantics and overhead. Keep the tool's coherence probe enabled, but still run Method A independently.
 
-Use the same prompt, token ceiling, sampling, concurrency, and context geometry within a comparison. Do not force the same *server flags* across forks; each guide supplies its optimized command. Report TTFT, server prefill, client-perceived decode, sustained delivery, wall time, RAM, loaded/peak VRAM, cache/draft acceptance, and errors. Keep MTP and no-MTP arms separate. Numerical output differences caused by expert placement should be characterized with matched-placement controls rather than treated as automatic corruption or automatic correctness.
+Freeze corpus bytes and tokenizer revision; record their hashes and the tool commit. At the pinned revision, a failed tokenizer load falls back to GPT-2. Reject the arm if its log reports that fallback. Hash the cached book text as well as recording its URL.
 
-## Method B: pinned `llama-benchy`
-
-Use the checkout pinned in [tooling.md](manifests/tooling.md). It targets OpenAI-compatible `/v1/chat/completions`, so verify the exact endpoint and served model alias for each fork. Keep its own built-in coherence probe enabled, but still run Method A independently. Freeze its corpus and tokenizer revisions; record their hashes and the tool commit. Its reported prompt speed estimates and post-first-content-token decode definition are distinct from Method A's server timers.
-
-Before a measured run, verify the requested tokenizer actually loaded. This pinned tool silently falls back to GPT-2 if both tokenizer loaders fail; reject the arm if its log reports that fallback. Hash the cached book text as well as recording its URL, since the tool reuses a local cache file on later runs.
-
-The default measurement grid is `--pp 2048 --tg 512 --depth 0 32768 --runs 3 --warmup-runs 1 --latency-mode generation --format json`. Run concurrency 1 and 4 as separate server configurations, with enough server slots/context for each. Add a deeper context case only when `depth + pp + tg` fits the configured context and the model is known to support it. Example client command after installing the pinned checkout in its isolated environment:
+The default grid is `--pp 2048 --tg 512 --depth 0 32768 --runs 3 --warmup-runs 1 --latency-mode generation --format json`, subject to model context support. Run concurrency 1 and 4 as separate configurations with sufficient server capacity. Example after installing the pinned tool in an isolated environment:
 
 ```sh
 tools/llama-benchy/.venv/bin/llama-benchy \
@@ -63,18 +56,18 @@ tools/llama-benchy/.venv/bin/llama-benchy \
   --exit-on-first-fail
 ```
 
-`MODEL_ID` identifies the model to benchy, while `SERVED_MODEL_ID` is the exact name accepted by the server. Both, the tokenizer, concurrency, and server launch come from the fork/model command packet. Confirm actual generation length; `--tg` is a request, not proof of exact output count. Use `--exact-tg` only when the runtime is verified to honor the fields it sends. Keep prefix-caching experiments in their own arm. Treat a blank decode rate for a one-chunk streaming response as unavailable, not zero; the [llama-benchy documentation](https://github.com/eugr/llama-benchy) defines that behavior.
+Set the identifiers and server launch from the engine/model packet. Confirm actual output length; `--tg` is a request, not proof of exact generation. Use `--exact-tg` only after verifying the engine honors the fields it sends. Treat a blank decode rate for a one-chunk response as unavailable. Do not combine coherent-generation and benchy rates into one score.
 
-## Results and comparison rules
+## Results and comparison
 
-Create one immutable directory per fork/model/mode/configuration/repetition. Start its metadata from [the run manifest template](manifests/run-template.json). Preserve command vectors, environment variable *names and nonsecret values*, Git SHAs, model hashes, process tree, logs, request/response, benchy JSON, GPU/RAM samples, stop reason, errors, and teardown proof. Keep captures private if prompts or logs contain personal data or credentials.
+Create an immutable result directory per engine/model/method/configuration/repetition. Start from [run-template.json](manifests/run-template.json). Keep full command vectors, nonsecret environment settings, engine/tool versions, model hashes, logs, request/response, benchy JSON, resource samples, stop reason, errors, and teardown proof. Store private captures outside public Git.
 
-Compare within the same hardware/OS cohort and under a stated memory envelope. Report prefill and decode separately, plus TTFT and completion wall time. Show median and spread for repeats; retain individual results. Put unmatched VRAM, different checkpoint lineage, failed output, and unsupported modes in clearly labeled rows. A faster row with worse output or missing cache-path evidence does not become a headline win. Do not collapse coherent-text and llama-benchy scores into one ratio.
+Compare within a hardware/OS cohort and stated memory envelope. Report prefill, decode, TTFT, and completion wall time separately, with median and spread across repeats. Retain individual results. Label unmatched artifacts, quantization, model lineage, failed output, unsupported modes, and adapter overhead. A faster row with worse output or missing optimization evidence is not a headline win.
 
-## Wiki publication after an explicit request
+## Publication
 
-The execution agent produces a proposed result table and links to the retained raw local artifacts. The coordinator checks its arithmetic and qualifications, fetches the current destination wiki (for this project's owner: `https://github.com/GenerelSchwerz/llama.cpp.wiki.git`), and edits only affected benchmark/model/setup pages plus `Home.md`. Check `git status`, fetch, and fast-forward before editing; preserve user edits and dated historical tables. Likely pages include `Benchmark-Comparison-Showcase.md`, model reports, `Owner-Verified-Benchmark-Evidence.md`, `Benchmark-Future-Coverage.md`, and `Notable-Runs.md`. State exact commits, artifact hashes, hardware, method, memory match, negative cases, and limits. Commit and push the wiki only when the user has asked to publish that sweep; re-fetch GitHub pages to verify the rendered data and links. Rebuild the repository README after the wiki's current claims are settled.
+The runner proposes a qualified table with raw artifact references. The coordinator checks arithmetic and limitations, then updates the designated report or wiki only when publication is requested. Fetch current content first, preserve existing edits and dated tables, state exact versions/hashes/hardware/methods, and verify the published rendering and links.
 
-## One-sentence future assignment
+## Reusable agent assignment
 
-"Read this repository's `RUNBOOK.md`; fan out source/arg review for every listed public fork, coalesce frozen model-specific command packets, use one execution agent to rerun both coherent-text and llama-benchy tracks, verify and retain results, then publish the qualified sweep to the designated GitHub wiki."
+"Read `RUNBOOK.md`; fan out engine/version and model-argument review, coalesce frozen model-specific command packets, use one execution agent per machine for coherent-generation and llama-benchy tracks, retain and evaluate raw results, then publish the qualified suite to the designated destination."

@@ -1,9 +1,9 @@
-# Cross-fork benchmark workspace
+# LLM engine benchmark workspace
 
-- Read `RUNBOOK.md`, `manifests/forks.md`, `manifests/matrix.md`, and the exact fork guide before any build or run.
-- Keep each fork's source, build, libraries, flags, result, and revision separate. Never build in `sources/` or overwrite a result.
-- Use both methods in the runbook: coherent-text requests and pinned `llama-benchy`. Neither substitutes for the other.
-- Follow each fork's model-specific guide; validate its command against the pinned source and binary before measuring.
-- Never update a source checkout in the middle of a run or compare results from unrecorded commits.
-- Preserve raw commands, prompts, outputs, server logs, benchmark JSON, memory samples, and errors. Report unavailable, failed, and slower cases.
-- Publishing requires an explicit user instruction to publish the benchmark update. When authorized, re-fetch the wiki, edit relevant pages, push, and verify the rendered result.
+- Read `RUNBOOK.md`, `manifests/sources.json`, the suite's model/workload manifest, and each selected engine guide before running.
+- Keep source, build, runtime environment, model artifacts, commands, result, and revision separate for every engine.
+- Research agents report exact per-engine/per-model command packets. The coordinator freezes a plan; one execution agent runs it on each machine.
+- Use coherent generation and the pinned llama-benchy track when its chat protocol is supported or adapted. Record an explicit unavailable result otherwise.
+- Validate source revisions, actual executable flags, model loading, output coherence, and intended optimization telemetry before measuring throughput.
+- Preserve raw commands, prompts, outputs, logs, benchmark JSON, memory samples, errors, and teardown. Mark failed and slower cases.
+- Never publish private model artifacts, credentials, personal prompts, or raw captures that contain private data.

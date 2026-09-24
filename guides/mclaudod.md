@@ -17,7 +17,7 @@ Pinned research SHA `b5516876f10c7ceea1ba4695cdcdc80f71c71c5f`. This is a CUDA h
 | Q38 | `llama-server -m <Q38.gguf> -ngl auto --cpu-moe --moe-cache on -fa on -c 8192 -np 1 -lv 4` is a **candidate only**. The cache design is generic, but the branch's published guide did not establish Q38 model-load compatibility; gate on a real load, output and pool log. |
 | DV4 | `llama-server -m <DV4.gguf> --fit on --moe-cache auto -fa on -c 8192 -np 1 -lv 4` on two eligible CUDA devices. The docs also give a four-GPU DSpark command using `-md <dspark.gguf> --spec-type draft-dspark --spec-draft-n-max 5`; keep that as a distinct speculative arm. |
 
-Tune `auto`, `on`, and fixed MiB budgets against the same placement and available VRAM. The documented default reserve is 3072 MiB per device; a fixed budget is a cap, not guaranteed allocation. Tests should include cache-off, warm and cold decode. A public [discussion report](https://github.com/ggml-org/llama.cpp/discussions/24528) notes an OOM on one DeepSeek setup, so model load alone is insufficient proof.
+Tune `auto`, `on`, and fixed MiB budgets against the same placement and available VRAM. The documented default reserve is 3072 MiB per device; a fixed budget is a cap, not guaranteed allocation. Tests should include cache-off, warm and cold decode. Include an OOM and memory-fit gate for DeepSeek; model load alone is insufficient proof.
 
 ### Coherent-text and llama-benchy tracks
 

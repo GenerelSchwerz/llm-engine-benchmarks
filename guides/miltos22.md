@@ -55,4 +55,4 @@ uv run --project tools/llama-benchy llama-benchy \
   --save-result "$RESULT_JSON"
 ```
 
-Keep fixed prompts, output length, model quant, context, GPU set, and host state across forks. Report prefill and decode, actual VRAM/RAM, hot-store slots/hits, and coherent output. Cache-off, autofit, and manual-slot results are distinct configurations; `-1` silently resolving to zero is a failed cache arm, not a slow cache.
+Keep fixed prompts, output length, model quant, context, GPU set, and host state across engines. Report prefill and decode, actual VRAM/RAM, hot-store slots/hits, and coherent output. Cache-off, autofit, and manual-slot results are distinct configurations; `-1` silently resolving to zero is a failed cache arm, not a slow cache.

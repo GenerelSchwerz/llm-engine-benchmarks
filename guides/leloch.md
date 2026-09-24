@@ -5,7 +5,7 @@ Research draft, 2026-09-24. These are source-reviewed launch templates, **not** 
 | Branch | Reviewed revision | Source evidence |
 | --- | --- | --- |
 | [Original `moe-cache-pr`](https://github.com/leloch/llama.cpp/tree/moe-cache-pr) | [`a01eb26468a6`](https://github.com/leloch/llama.cpp/tree/a01eb26468a6cb2bf2c3bfd1cc3b5d9e64daefcd) | [`common/arg.cpp`](https://github.com/leloch/llama.cpp/blob/a01eb26468a6cb2bf2c3bfd1cc3b5d9e64daefcd/common/arg.cpp), [`moe-cache.cu`](https://github.com/leloch/llama.cpp/blob/a01eb26468a6cb2bf2c3bfd1cc3b5d9e64daefcd/ggml/src/ggml-cuda/moe-cache.cu) |
-| [Revised `moe-cache-v2-pr`](https://github.com/leloch/llama.cpp/tree/moe-cache-v2-pr) | [`e3096b046bb8`](https://github.com/leloch/llama.cpp/tree/e3096b046bb809f7f80bc47801f6579aed1cbc60) | [`common/arg.cpp`](https://github.com/leloch/llama.cpp/blob/e3096b046bb809f7f80bc47801f6579aed1cbc60/common/arg.cpp), [`moe-cache.cu`](https://github.com/leloch/llama.cpp/blob/e3096b046bb809f7f80bc47801f6579aed1cbc60/ggml/src/ggml-cuda/moe-cache.cu), [discussion update](https://github.com/ggml-org/llama.cpp/discussions/24528) |
+| [Revised `moe-cache-v2-pr`](https://github.com/leloch/llama.cpp/tree/moe-cache-v2-pr) | [`e3096b046bb8`](https://github.com/leloch/llama.cpp/tree/e3096b046bb809f7f80bc47801f6579aed1cbc60) | [`common/arg.cpp`](https://github.com/leloch/llama.cpp/blob/e3096b046bb809f7f80bc47801f6579aed1cbc60/common/arg.cpp), [`moe-cache.cu`](https://github.com/leloch/llama.cpp/blob/e3096b046bb809f7f80bc47801f6579aed1cbc60/ggml/src/ggml-cuda/moe-cache.cu) |
 
 ## Model support and launch recipes
 
@@ -13,7 +13,7 @@ Set `Q36` and `DSV4` to complete GGUF paths, and choose `CTX`, `NGL`, `THREADS`,
 
 | Model | Original branch | v2 branch | Reason |
 | --- | --- | --- | --- |
-| Qwen3.6-35B-A3B | Candidate; [original discussion test](https://github.com/ggml-org/llama.cpp/discussions/24528) used Qwen3.6 | Candidate | Both contain Qwen3.5-family model handling. Confirm actual GGUF metadata loads. |
+| Qwen3.6-35B-A3B | Candidate; Qwen3.6 support requires a model run | Candidate | Both contain Qwen3.5-family model handling. Confirm actual GGUF metadata loads. |
 | Qwen3.8-Flash-Next | **Unsupported at reviewed revision** | **Unsupported at reviewed revision** | Neither branch has the `qwen4exp` architecture introduced for this model; do not substitute `qwen3next` by name. |
 | DeepSeek V4 Flash | **Unsupported at reviewed revision** | Candidate | v2 contains `deepseek4` model and KV implementations; original does not. Verify the particular GGUF and quant. |
 
@@ -41,11 +41,11 @@ v2 DeepSeek V4 Flash, target only first; add a separate draft/MTP arm only after
   -t "$THREADS" --port "$PORT" -lv 4
 ```
 
-The original parser accepts `--moe-cache off|0|auto|on|N` and writes `GGML_CUDA_MOE_CACHE*` environment variables; v2 accepts the same modes into structured parameters. `N` is a positive per-device MiB budget, so vary it after recording the actual pool size. Original [user testing](https://github.com/ggml-org/llama.cpp/discussions/24528) reported `auto` parser failure and ambiguous `0` behavior on an earlier revision; v2 [claims fixes](https://github.com/ggml-org/llama.cpp/discussions/24528). For a hard-off reference on the original, set `GGML_CUDA_MOE_CACHE=0 GGML_CUDA_MOE_CACHE_HOTSET=0`, and verify the logs. Avoid sweeping `GGML_CUDA_MOE_CACHE_MAX_BATCH` without confirming its effect: default original is 1, and v2 logs a bypass above its configured limit. Warm a cache with enough varied decode before measuring; a cold or underfilled pool misstates the result. The cache uses spare VRAM after a reserve, so verify allocated slots and hit counters, not merely the command line. Source: [original parser](https://github.com/leloch/llama.cpp/blob/a01eb26468a6cb2bf2c3bfd1cc3b5d9e64daefcd/common/arg.cpp), [v2 batch gate](https://github.com/leloch/llama.cpp/blob/e3096b046bb809f7f80bc47801f6579aed1cbc60/ggml/src/ggml-cuda/moe-cache.cu).
+The original parser accepts `--moe-cache off|0|auto|on|N` and writes `GGML_CUDA_MOE_CACHE*` environment variables; v2 accepts the same modes into structured parameters. `N` is a positive per-device MiB budget, so vary it after recording the actual pool size. Verify `auto` and `0` behavior on the pinned binaries; parser behavior can differ between the two revisions. For a hard-off reference on the original, set `GGML_CUDA_MOE_CACHE=0 GGML_CUDA_MOE_CACHE_HOTSET=0`, and verify the logs. Avoid sweeping `GGML_CUDA_MOE_CACHE_MAX_BATCH` without confirming its effect: default original is 1, and v2 logs a bypass above its configured limit. Warm a cache with enough varied decode before measuring; a cold or underfilled pool misstates the result. The cache uses spare VRAM after a reserve, so verify allocated slots and hit counters, not merely the command line. Source: [original parser](https://github.com/leloch/llama.cpp/blob/a01eb26468a6cb2bf2c3bfd1cc3b5d9e64daefcd/common/arg.cpp), [v2 batch gate](https://github.com/leloch/llama.cpp/blob/e3096b046bb809f7f80bc47801f6579aed1cbc60/ggml/src/ggml-cuda/moe-cache.cu).
 
 ## Two measurements for each supported model
 
-1. **Coherent text:** With the appropriate server above, run the matching alias (`q36` or `dsv4`) through `/v1/chat/completions`. Preserve the full answer, finish reason, server log, output token count, and timing. Use the same prompt and generation limit across forks; do not treat a successful startup as a pass.
+1. **Coherent text:** With the appropriate server above, run the matching alias (`q36` or `dsv4`) through `/v1/chat/completions`. Preserve the full answer, finish reason, server log, output token count, and timing. Use the same prompt and generation limit across engines; do not treat a successful startup as a pass.
 
    ```sh
    curl -fsS "http://127.0.0.1:$PORT/v1/chat/completions" \

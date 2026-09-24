@@ -1,12 +1,10 @@
 # Contributing
 
-Fork additions, corrections, and measured results are welcome. This repository tracks instructions and public fixtures; backend checkouts, weights, builds, logs, and raw results stay out of Git.
+Engine additions, setup corrections, workload fixtures, and measured results are welcome. Engine checkouts, weights, builds, and raw captures stay outside Git.
 
-To add or update a runtime:
+1. Add an entry to `manifests/sources.json` with a unique ID, source type, and immutable revision or digest. Add context to `manifests/engines.md` when useful. Git sources can use `python scripts/install_sources.py --id ID`; other source types need reproducible `install_notes` and version verification.
+2. Write a guide using `guides/TEMPLATE.md`. State how to install, launch, stop, and inspect the engine; map model artifacts and any endpoint aliases; give baseline and tuned commands per supported model. Provide evidence for engine-specific options and mark unrun commands as drafts.
+3. Describe how the engine exposes OpenAI-compatible chat for llama-benchy, or document a protocol adapter. Record unsupported behavior instead of silently substituting another workload.
+4. For measured results, follow `RUNBOOK.md`: pin artifacts, match controls, inspect full output, retain timings and memory evidence, and state limitations. Keep credentials and private captures out of Git.
 
-1. Edit `manifests/sources.json` with its public repository, tracking branch, exact commit, unique ID, and `backend` kind. Update `manifests/forks.md` with its relationship to the other implementations and source evidence.
-2. Add or update its guide under `guides/`. Include model-specific baseline and tuned commands, build requirements, supported and unsupported models, source references for flags, and both coherent-text and llama-benchy methods. Mark unrun commands as research drafts.
-3. Run `python scripts/install_sources.py --id ID` and `python scripts/check_sources.py --remote` to confirm the pin is fetchable and local source is clean. Review the exact binary's help and run a model before calling any command validated.
-4. For benchmark submissions, follow `RUNBOOK.md` and include pinned artifacts, matched controls, complete output, memory and timing evidence, and limitations. Avoid publishing private prompts, credentials, or raw logs that contain private data.
-
-The MIT license covers this repository's original scripts and documentation. Cloned runtimes and llama-benchy retain their own licenses and are not included here.
+The MIT license covers this repository's original scripts and documentation. Third-party engines and tools keep their own licenses.

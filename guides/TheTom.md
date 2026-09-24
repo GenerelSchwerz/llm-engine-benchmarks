@@ -63,4 +63,4 @@ uv run --project tools/llama-benchy llama-benchy \
   --save-result "$RESULT_JSON"
 ```
 
-Use the same prompt corpus, output length, context, quant, GPU set, and KV types across forks. Record actual peak VRAM and RAM, placement, cache engagement, TTFT, prefill, decode, and output coherence. Keep target-only, MTP, and KV-codec results in distinct rows. No performance result is claimed from these source-reviewed templates.
+Use the same prompt corpus, output length, context, quant, GPU set, and KV types across engines. Record actual peak VRAM and RAM, placement, cache engagement, TTFT, prefill, decode, and output coherence. Keep target-only, MTP, and KV-codec results in distinct rows. No performance result is claimed from these source-reviewed templates.

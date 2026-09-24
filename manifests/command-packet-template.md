@@ -1,22 +1,22 @@
-# Fork/model command packet
+# Engine/model command packet
 
-One packet covers one fork, one exact model artifact, one hardware cohort, and one benchmark mode. Return a packet for unsupported pairs too.
+One packet covers one engine, exact model artifact, hardware cohort, and benchmark method. Return packets for unsupported or unavailable pairs too.
 
 - Suite ID and research agent:
-- Fork ID, repository, tracking branch, previous validated SHA, observed remote SHA, frozen SHA:
-- Source status: `reuse` / `review required` / `unavailable` / `unsupported`
-- Model ID, quant, source revision, SHA256, tokenizer and draft hashes:
+- Engine ID, source type, prior validated revision, observed revision, frozen revision/digest:
+- Source status: `reuse` / `review required` / `unavailable` / `unsupported`:
+- Model ID, format, quant/dtype, source revision, SHA256 or service ID, tokenizer/draft hashes:
 - Hardware/OS/backend cohort and memory ceiling:
 - Prior validated command/result IDs, if reuse is claimed:
-- Diff and source/arg-parser/build files inspected if changed:
-- Build command and required runtime environment:
-- Method A baseline server command and request fixture:
-- Method A tuned server command and why each differing flag is used:
-- Method B server command, served alias, tokenizer, and llama-benchy client command:
-- Context capacity, batch/ubatch, parallel slots, load mode, KV types, cache budget, draft configuration:
-- Expected proof counters and completion/quality gates:
-- Known failures, unsupported features, and unresolved questions:
+- Source/API/default changes and evidence inspected:
+- Install/build command and version verification:
+- Method A baseline launch/invocation and frozen request fixture:
+- Method A tuned launch/invocation and rationale for each changed setting:
+- Method B endpoint, served alias, tokenizer, adapter/version if needed, and llama-benchy command; or unavailable reason:
+- Context, batching, parallelism, placement, KV/cache/draft settings where applicable:
+- Expected proof counters and output/quality gates:
+- Known failures, unsupported features, unresolved questions:
 - Evidence URLs or local source file/line references:
-- Validation status: source-reviewed / binary-help-checked / model-run-checked:
+- Validation status: source-reviewed / engine-verified / model-run-checked:
 
-Do not label an updated fork's command "previously validated" until the new pinned binary and model run pass. Keep the previous command and result available for regression comparison.
+A changed engine cannot inherit a "previously validated" label from an older revision. Keep the prior packet and result for regression comparison.

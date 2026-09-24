@@ -17,7 +17,7 @@ Original public head: [`csantiago78:moe-expert-cache`](https://github.com/csanti
 | Q38 | Same command with `<Q38.gguf>`; the PR cites 48 slots / 2 inserts on a single GPU, while other users report 84 slots / 4 inserts. Verify this branch actually loads the exact Q38 quant before including it. |
 | DV4 | The cache API is generic, but no clean original-head DV4 command was established in the PR; **conditional** on model support and a successful full request. Use the same target-only template with `<DV4.gguf>`, without assuming the reported Q38 settings transfer. |
 
-The [RFC discussion's Q38 MTP reproduction](https://github.com/ggml-org/llama.cpp/discussions/24528) combined this PR with a newer Q38/MTP base and public follow-up patches, and used `LLAMA_MOE_CACHE_MAX_TOKENS=3`. That variable is from a **follow-up small-batch patch**, not the original PR. Its 16 setting triggered an illegal-memory-access failure in one test; do not copy the combined command into the original-head recipe. Version the patch stack as a separate candidate, record every patch SHA, and validate its `--help` and graph-width behavior.
+A Q38 MTP configuration that combines this PR with a newer MTP base and follow-up patches is a distinct source revision. `LLAMA_MOE_CACHE_MAX_TOKENS=3` belongs to a follow-up patch. That variable is from a **follow-up small-batch patch**, not the original PR. Its 16 setting triggered an illegal-memory-access failure in one test; do not copy the combined command into the original-head recipe. Version the patch stack as a separate candidate, record every patch SHA, and validate its `--help` and graph-width behavior.
 
 ### Coherent-text and llama-benchy tracks
 
