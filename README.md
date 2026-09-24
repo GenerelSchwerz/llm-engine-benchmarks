@@ -18,6 +18,17 @@ Edit [the source list](manifests/sources.json) to add an engine. Git sources ins
 
 Then choose models and workloads in [the suite matrix](manifests/matrix.md), prepare an [engine guide](guides/TEMPLATE.md), and follow [the runbook](RUNBOOK.md). The runbook covers a coherent-text track and a separate [llama-benchy](https://github.com/eugr/llama-benchy) track. Engines without a compatible chat endpoint need an adapter for the latter.
 
+## Run with Codex
+
+With the [Codex CLI](https://developers.openai.com/codex/cli/) installed and signed in, start an interactive agent from this repository:
+
+```sh
+python scripts/start_codex.py prepare my-suite
+python scripts/start_codex.py run my-suite
+```
+
+`prepare` checks sources and creates a frozen, model-specific run plan. Review that plan, then use `run` for measurements and evidence collection. Add `--engine freetoken` to narrow the suite, or `--dry-run` to see the agent prompt. The launcher does not publish results.
+
 ## Explore
 
 | Looking for… | Start here |
