@@ -23,15 +23,20 @@ uv run llama-benchy --version
 uv run scripts/tui.py
 ```
 
-The minimal terminal UI has three tabs:
+The minimal terminal UI has four tabs:
 
 | Tab | What you do |
 | --- | --- |
-| **Engines** | Add or edit Git, package, container, remote, and local engines; select, install, or check them. |
-| **Models** | Record artifact, revision, tokenizer, dtype, context, and compatible engines; select the setups to compare. |
+| **Engines** | Ask an agent to find and install a fork in one sentence, or toggle to a manual locator form. |
+| **Models** | Ask an agent to find or install one or several models, or toggle to a manual locator form. |
 | **Suite** | Name the suite, choose whether to check upstream updates, then prepare or run it with Codex. |
+| **Agents** | Watch color coded live output in a separate tab for each running setup agent. |
 
-Use **Tab** to move between controls and **Space** to toggle a selection. Update checks are off by default. Model setups and TUI selections stay local; see the [model setup format](manifests/models.md). The UI writes engine changes to the editable [source list](manifests/sources.json). Preparing or running a suite requires the [Codex CLI](https://developers.openai.com/codex/cli/) to be installed and signed in. The UI does not publish results.
+Use **Tab** to move between controls and **Space** to toggle a selection. The setup mode button is at the bottom of each tab. In Agent mode, describe what you want and watch its output in **Agents**. The program polls for the result and validates the agent's structured response. A confident result appears in green as **ready** and waits for **Confirm result**; an ambiguous or blocked request appears in amber as **needs_input**, and the same input becomes **Answer & retry**. Failed agent runs appear in red in the output. You can switch to Manual mode at any time. Select one saved item and choose **Edit selected** to change it.
+
+Update checks are off by default. The UI generates IDs and saves additions, requests, and selections in a local SQLite file. You do not need to find SHAs, package versions, or tokenizers. During preparation, the agent researches those details, hashes local artifacts, and submits commands and metadata through a [validated CLI](scripts/suite_store.py). Code rejects incomplete records before it freezes the plan. See [model setups](manifests/models.md).
+
+Preparing or running a suite requires the [Codex CLI](https://developers.openai.com/codex/cli/) to be installed and signed in. The UI does not publish results.
 
 For a manual or scripted workflow, use the same commands directly:
 
@@ -41,7 +46,7 @@ uv run scripts/install_sources.py --id ENGINE_ID  # install one pinned Git sourc
 uv run scripts/check_sources.py --id ENGINE_ID    # check its local pin
 ```
 
-Git sources install into ignored local directories; package, container, remote, and local entries provide installation notes instead. See the [source format](manifests/source-schema.md) for examples.
+The checked-in [source list](manifests/sources.json) contains pinned, reusable examples. Git sources install into ignored local directories; package, container, remote, and local entries provide installation notes instead. New entries added in the TUI stay local until you deliberately add them to the shared source list. See the [source format](manifests/source-schema.md).
 
 Then choose models and workloads in [the suite matrix](manifests/matrix.md), prepare an [engine guide](guides/TEMPLATE.md), and follow [the runbook](RUNBOOK.md). The runbook covers a coherent-text track and a separate [llama-benchy](https://github.com/eugr/llama-benchy) track. Engines without a compatible chat endpoint need an adapter for the latter.
 
@@ -50,12 +55,12 @@ Then choose models and workloads in [the suite matrix](manifests/matrix.md), pre
 With the [Codex CLI](https://developers.openai.com/codex/cli/) installed and signed in, start an interactive agent from this repository:
 
 ```sh
-uv run scripts/start_codex.py prepare my-suite --engine freetoken --model my-model                 # use local pins
-uv run scripts/start_codex.py prepare my-suite --engine freetoken --model my-model --check-updates # inspect upstream
-uv run scripts/start_codex.py run my-suite                                        # run frozen plan
+uv run scripts/start_codex.py prepare my-suite --engine ENGINE_ID --model MODEL_ID
+uv run scripts/start_codex.py prepare my-suite --engine ENGINE_ID --model MODEL_ID --check-updates
+uv run scripts/start_codex.py run my-suite
 ```
 
-`prepare` creates a frozen, model-specific run plan. Update checks are **off by default** to save time and agent usage; `--no-check-updates` states that choice explicitly. The local pin still has to match the manifest, and prior arguments are reusable only when the whole validated configuration matches. Review the plan before `run`. Repeat `--engine` and `--model` for more selections. Use `--dry-run` to see the prompt. The launcher does not publish results.
+`prepare` creates a draft and launches the agent. The agent must pass code validation to freeze it. Update checks are **off by default** to save time and agent usage; `--no-check-updates` states that choice explicitly. Exact versions must still be resolved for new sources. Review the frozen plan before `run`. Repeat `--engine` and `--model` for more selections. Use `--dry-run` to see the prompt. The launcher does not publish results.
 
 ## Explore
 

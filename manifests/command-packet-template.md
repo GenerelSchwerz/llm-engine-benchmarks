@@ -20,3 +20,21 @@ One packet covers one engine, exact model artifact, hardware cohort, and benchma
 - Validation status: source-reviewed / engine-verified / model-run-checked:
 
 A changed engine cannot inherit a "previously validated" label from an older revision. Keep the prior packet and result for regression comparison.
+
+## Validated record for the local suite catalog
+
+For each selected engine and model, write one JSON file per method and submit it with `uv run scripts/suite_store.py record-packet SUITE path/to/packet.json`. The method is `coherent` or `benchy`. A supported packet needs a complete command or request object, tuning rationale, and memory target:
+
+```json
+{
+  "engine_id": "engine-id",
+  "model_id": "model-id",
+  "method": "coherent",
+  "support": "supported",
+  "command": ["path/to/server", "--model", "path/to/model"],
+  "tuning_rationale": "Baseline configuration verified against this revision",
+  "memory_target": "16 GiB VRAM"
+}
+```
+
+For an unavailable method, set `"support": "unavailable"` and give `"reason"`. The code rejects missing fields and pairs outside the suite. `uv run scripts/suite_store.py validate SUITE` lists remaining missing records; `freeze SUITE` locks the plan.

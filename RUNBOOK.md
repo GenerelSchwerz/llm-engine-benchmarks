@@ -1,6 +1,8 @@
 # LLM engine benchmark runbook
 
-Use this guide for a reproducible comparison of any LLM inference engines. Start with the editable [source list](manifests/sources.json), local [model setups](manifests/models.md), [engine catalog](manifests/engines.md), [suite matrix](manifests/matrix.md), [tool pin](manifests/tooling.md), and the selected engine guides. The included MoE guides are research examples; no new live sweep is implied by them. Humans can use `uv run scripts/tui.py` to manage engine and model selections and launch the Codex preparation or run stage.
+Use this guide for a reproducible comparison of any LLM inference engines. Start with the editable [source list](manifests/sources.json), local [model setups](manifests/models.md), [engine catalog](manifests/engines.md), [suite matrix](manifests/matrix.md), [tool pin](manifests/tooling.md), and the selected engine guides. The included MoE guides are research examples; no new live sweep is implied by them. Humans can use `uv run scripts/tui.py` to add simple locators and launch the Codex preparation or run stage.
+
+Preparation creates a draft in the local SQLite catalog. The agent reads it with `uv run scripts/suite_store.py show SUITE`, then writes exact engine revisions with `record-engine` (and `--installed-path PATH` for a new Git checkout), model revisions and tokenizer with `record-model`, and each engine/model/method command packet with `record-packet`. The CLI hashes local artifacts and verifies Git checkout HEAD against the recorded commit. It rejects missing or invalid data; the agent must fix errors and run `validate` and `freeze`. `run` refuses an unfrozen suite. The catalog stores a snapshot of the selected setups, so later TUI edits do not change an existing suite.
 
 ## Fan-out, coalescing, and one runner
 

@@ -9,3 +9,4 @@
 /.benchmark-tui.json
 /manifests/models.json
 /manifests/suites/*/
+/benchmark-catalog.sqlite3*

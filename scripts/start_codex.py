@@ -8,8 +8,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from source_manifest import ROOT, load_sources
-from tui_data import load_models
+from source_manifest import ROOT
+from suite_store import create_suite, show_suite, validate_suite
+from tui_data import list_engines, list_models, migrate_old_files
 
 
 def make_prompt(stage: str, suite_id: str, engines: list[str], models: list[str], check_updates: bool) -> str:
@@ -21,10 +22,16 @@ def make_prompt(stage: str, suite_id: str, engines: list[str], models: list[str]
     model_selection = ", ".join(models) if models else "the models selected for the suite"
     intro = (
         f"Work on benchmark suite {suite_id!r} for {selection} and {model_selection}. "
-        "Read AGENTS.md, RUNBOOK.md, manifests/sources.json, manifests/models.json if present, manifests/matrix.md, "
-        "and the relevant engine guides. Follow the runbook's fan-out, coalescing, "
+        "Read AGENTS.md, RUNBOOK.md, manifests/matrix.md, and the selected engine guides. "
+        "Read selected setup records with 'uv run scripts/suite_store.py show " + suite_id + "'. "
+        "Follow the runbook's fan-out, coalescing, "
         "and single-runner handoff. Use research subagents when available; otherwise "
-        "complete the reviews sequentially and say so. Preserve existing work and "
+        "complete the reviews sequentially and say so. Record engine revisions with "
+        "'uv run scripts/suite_store.py record-engine', model revisions and tokenizer with "
+        "'record-model', and per-pair commands with 'record-packet'. These commands validate "
+        "and write to SQLite; check every exit status. Finish preparation with "
+        "'uv run scripts/suite_store.py freeze " + suite_id + "'. If validation rejects a "
+        "record, fix it and do not claim the plan is frozen. Preserve existing work and "
         "report exact artifacts, unresolved inputs, and next steps. "
     )
     if not engines and stage == "prepare":
@@ -37,8 +44,8 @@ def make_prompt(stage: str, suite_id: str, engines: list[str], models: list[str]
         "non-Git engines. Review upstream changes only where a revision moved. Do not "
         "change manifest pins silently. "
         if check_updates else
-        "Use the pinned local sources without checking upstream for updates. Do not "
-        "query remote tracking refs or spend agent time reviewing upstream changes. "
+        "Skip freshness checks for already pinned sources. Resolve exact revisions for "
+        "new or unpinned sources, and hash local artifacts through record-model/record-engine. "
         "Reuse prior arguments only if the exact engine, model, tool, adapter, workload, "
         "and hardware inputs match a validated run; otherwise review the pinned local "
         "source and mark the command as a draft. "
@@ -46,13 +53,14 @@ def make_prompt(stage: str, suite_id: str, engines: list[str], models: list[str]
     stages = {
         "prepare": (
             "Prepare a new frozen suite revision. " + update_instruction +
-            "Check local source pins, return packets per model and method, review code "
+            "Check local source pins, identify model details and tokenizer, return packets "
+            "per model and method, review code "
             "only where prior validation cannot be reused, coalesce the packets, and record the "
             "plan and required model/hardware inputs. Do not build engines, run model "
             "benchmarks, or publish results in this stage."
         ),
         "run": (
-            "Run the already frozen suite plan with one execution agent per machine. "
+            "Run the already frozen suite plan from SQLite with one execution agent per machine. "
             "Validate builds and model output, execute coherent-generation and "
             "llama-benchy tracks where supported, retain raw evidence, and report "
             "qualified results. If no complete frozen plan exists, prepare it first "
@@ -78,18 +86,17 @@ def main() -> int:
     args = parser.parse_args()
     if not args.suite_id or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for ch in args.suite_id):
         parser.error("suite_id must contain only letters, digits, hyphens, and underscores")
-    known = {item["id"] for item in load_sources() if item["kind"] == "engine"}
+    migrate_old_files()
+    known = {item["id"] for item in list_engines()}
     unknown = set(args.engine) - known
     if unknown:
         parser.error(f"unknown engine IDs: {', '.join(sorted(unknown))}")
-    known_models = {item["id"] for item in load_models()}
+    known_models = {item["id"] for item in list_models()}
     unknown_models = set(args.model) - known_models
     if unknown_models:
         parser.error(f"unknown model IDs: {', '.join(sorted(unknown_models))}")
     if args.stage == "run" and args.check_updates:
         parser.error("update checks belong to prepare; run uses the frozen suite plan")
-    if args.stage == "run" and not (ROOT / "manifests/suites" / args.suite_id).is_dir():
-        parser.error(f"suite directory missing: manifests/suites/{args.suite_id}; run prepare first")
     prompt = make_prompt(args.stage, args.suite_id, args.engine, args.model, args.check_updates)
     command = ["codex", "-C", str(ROOT), prompt]
     if args.dry_run:
@@ -100,6 +107,20 @@ def main() -> int:
     if executable is None:
         print("Codex CLI is not installed or not on PATH. See https://developers.openai.com/codex/cli/", file=sys.stderr)
         return 1
+    try:
+        if args.stage == "prepare":
+            create_suite(args.suite_id, args.engine, args.model, args.check_updates)
+        else:
+            frozen = show_suite(args.suite_id)
+            if frozen["suite"]["status"] != "frozen":
+                raise ValueError("Suite is not frozen; finish preparation first")
+            if args.engine and set(args.engine) != {x["engine_id"] for x in frozen["engines"]}:
+                raise ValueError("Selected engines differ from the frozen suite")
+            if args.model and set(args.model) != {x["model_id"] for x in frozen["models"]}:
+                raise ValueError("Selected models differ from the frozen suite")
+            validate_suite(args.suite_id)
+    except ValueError as exc:
+        parser.error(str(exc))
     return subprocess.call([executable, *command[1:]])
 
 

@@ -1,6 +1,8 @@
 # LLM engine benchmark workspace
 
-- Read `RUNBOOK.md`, `manifests/sources.json`, `manifests/models.json` when present, the suite's model/workload manifest, and each selected engine guide before running. The TUI selects IDs; it does not validate runtime compatibility.
+- Read `RUNBOOK.md`, `uv run scripts/suite_store.py show SUITE`, the suite matrix, and each selected engine guide. The TUI selects IDs; the preparation agent resolves exact versions and compatibility.
+- For a TUI setup request, read `uv run scripts/catalog_cli.py show-request REQUEST_ID`. Save verified discoveries through `catalog_cli.py add-engine` or `add-model`. Check all exit codes. Return JSON matching `manifests/setup-response.schema.json` with `ready` plus every saved result ID, or `needs_input` plus concrete questions. The TUI validates that response, polls for completion, and lets the user confirm ready results.
+- Write preparation findings through `scripts/suite_store.py record-engine`, `record-model`, and `record-packet`. Run `validate` then `freeze`. Check exit codes and correct rejected records; never claim a suite is frozen after a failed write.
 - Use `uv run scripts/<name>.py` for this repository's Python entry points. The pinned llama-benchy package is installed from `uv.lock`.
 - Keep source, build, runtime environment, model artifacts, commands, result, and revision separate for every engine.
 - Research agents report exact per-engine/per-model command packets. The coordinator freezes a plan; one execution agent runs it on each machine.
