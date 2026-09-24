@@ -41,6 +41,11 @@ def connect(path: Path = DB) -> Iterator[sqlite3.Connection]:
             message TEXT NOT NULL DEFAULT '', result_ids TEXT NOT NULL DEFAULT '[]',
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS request_results (
+            request_id TEXT NOT NULL REFERENCES requests(id),
+            result_id TEXT NOT NULL,
+            PRIMARY KEY (request_id, result_id)
+        );
     """)
     columns = {row["name"] for row in db.execute("PRAGMA table_info(engines)")}
     for name in ("revision", "installed_path"):
@@ -188,6 +193,24 @@ def get_request(ident: str, path: Path = DB) -> dict:
     return dict(row) | {"result_ids": json.loads(row["result_ids"])}
 
 
+def attach_request_result(ident: str, result_id: str, path: Path = DB) -> None:
+    request = get_request(ident, path)
+    if request["status"] != "pending":
+        raise ValueError("Request is not pending")
+    known = {x["id"] for x in (list_engines(path) if request["kind"] == "engine" else list_models(path))}
+    if result_id not in known:
+        raise ValueError("Result ID does not match a saved item of the requested kind")
+    with connect(path) as db:
+        db.execute("INSERT OR IGNORE INTO request_results VALUES (?,?)", (ident, result_id))
+
+
+def request_results(ident: str, path: Path = DB) -> list[str]:
+    with connect(path) as db:
+        return [row["result_id"] for row in db.execute(
+            "SELECT result_id FROM request_results WHERE request_id=? ORDER BY rowid", (ident,)
+        )]
+
+
 def latest_request(kind: str, path: Path = DB) -> dict | None:
     with connect(path) as db:
         row = db.execute("SELECT id FROM requests WHERE kind=? ORDER BY updated_at DESC, rowid DESC LIMIT 1",
@@ -258,6 +281,7 @@ def answer_request(ident: str, answer: str, path: Path = DB) -> None:
     with connect(path) as db:
         db.execute("UPDATE requests SET prompt=?, status='pending', message='', updated_at=CURRENT_TIMESTAMP WHERE id=?",
                    (request["prompt"] + "\nUser clarification: " + answer.strip(), ident))
+        db.execute("DELETE FROM request_results WHERE request_id=?", (ident,))
 
 
 def migrate_old_files(path: Path = DB, old_models: Path = OLD_MODELS, old_state: Path = OLD_STATE) -> None:

@@ -3,6 +3,7 @@
 import asyncio
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -10,7 +11,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from rich.console import ColorSystem
+from textual.filter import Monochrome
 from textual.widgets import Checkbox, Input, SelectionList, TabbedContent
+from textual_tty import Terminal
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import suite_store  # noqa: E402
@@ -20,6 +24,98 @@ from start_codex import make_prompt  # noqa: E402
 
 
 class SetupTest(unittest.TestCase):
+    def test_monochrome_terminal_uses_event_log(self) -> None:
+        with patch.object(tui, "migrate_old_files", lambda: None):
+            app = tui.BenchmarkApp()
+        with patch.dict(os.environ, {"TERM": "xterm-256color", "NO_COLOR": "1"}):
+            app.console._color_system = ColorSystem.EIGHT_BIT
+            self.assertFalse(app.embedded_terminal_available())
+        with patch.dict(os.environ, {"TERM": "dumb"}, clear=True):
+            self.assertFalse(app.embedded_terminal_available())
+        with patch.dict(os.environ, {"TERM": "xterm-256color"}, clear=True):
+            self.assertTrue(app.embedded_terminal_available())
+
+    def test_embedded_terminal_completes_validated_request(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            db = Path(temp) / "catalog.sqlite3"
+            artifact = Path(temp) / "model.gguf"
+            artifact.write_bytes(b"model")
+            request = tui_data.create_request("model", "Find model", db)
+            model = tui_data.save_model({"artifact": str(artifact), "label": "Local"}, db)
+            tui_data.attach_request_result(request, model, db)
+            with self.assertRaisesRegex(ValueError, "requested kind"):
+                tui_data.attach_request_result(request, "upstream", db)
+
+            real_terminal = Terminal
+            patches = [
+                patch.object(tui, "migrate_old_files", lambda: None),
+                patch.object(tui, "list_engines", lambda: tui_data.list_engines(db)),
+                patch.object(tui, "list_models", lambda: tui_data.list_models(db)),
+                patch.object(tui, "load_state", lambda: tui_data.load_state(db)),
+                patch.object(tui, "save_state", lambda state: tui_data.save_state(state, db)),
+                patch.object(tui, "latest_request", lambda kind: tui_data.latest_request(kind, db)),
+                patch.object(tui, "get_request", lambda ident: tui_data.get_request(ident, db)),
+                patch.object(tui, "request_results", lambda ident: tui_data.request_results(ident, db)),
+                patch.object(tui, "resolve_request", lambda ident, status, message, result_ids=None:
+                             tui_data.resolve_request(ident, status, message, result_ids, db)),
+                patch.object(tui.BenchmarkApp, "embedded_terminal_available", lambda _self: True),
+                patch.object(tui, "Terminal", lambda command, id: real_terminal(
+                    command=["sh", "-c", "printf 'interactive\\n'"], id=id)),
+            ]
+            for item in patches:
+                item.start()
+            try:
+                async def exercise():
+                    app = tui.BenchmarkApp()
+                    app._filters = [item for item in app._filters if not isinstance(item, Monochrome)]
+                    async with app.run_test(size=(100, 35)) as pilot:
+                        app.active_requests.add(request)
+                        await app.start_agent_tab("model", request, "Test")
+                        for _ in range(50):
+                            await asyncio.sleep(0.01)
+                            await pilot.pause()
+                            if tui_data.get_request(request, db)["status"] == "ready":
+                                break
+                        self.assertEqual(tui_data.get_request(request, db)["status"], "ready")
+                        self.assertFalse(app.active_requests)
+
+                asyncio.run(exercise())
+            finally:
+                for item in reversed(patches):
+                    item.stop()
+
+    def test_embedded_suite_preflight_and_exit(self) -> None:
+        created = []
+        real_terminal = Terminal
+        patches = [
+            patch.object(tui, "migrate_old_files", lambda: None),
+            patch.object(tui, "create_suite", lambda *args: created.append(args)),
+            patch.object(tui, "show_suite", lambda _id: {"suite": {"status": "frozen"}}),
+            patch.object(tui.BenchmarkApp, "embedded_terminal_available", lambda _self: True),
+            patch.object(tui, "Terminal", lambda command, id: real_terminal(
+                command=["sh", "-c", "printf 'suite\\n'"], id=id)),
+        ]
+        for item in patches:
+            item.start()
+        try:
+            async def exercise():
+                app = tui.BenchmarkApp()
+                app._filters = [item for item in app._filters if not isinstance(item, Monochrome)]
+                async with app.run_test(size=(100, 35)) as pilot:
+                    await app.start_suite_tab("prepare", "demo-suite", ["upstream"], ["demo-model"], False, "Test")
+                    for _ in range(50):
+                        await asyncio.sleep(0.01)
+                        await pilot.pause()
+                        if not app.terminals:
+                            break
+                    self.assertEqual(created[0][0], "demo-suite")
+                    self.assertFalse(app.terminals)
+
+            asyncio.run(exercise())
+        finally:
+            for item in reversed(patches):
+                item.stop()
+
     def test_tui_generates_ids_and_persists_sqlite(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             db = Path(temp) / "catalog.sqlite3"

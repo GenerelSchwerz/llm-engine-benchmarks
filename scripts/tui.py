@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Small terminal UI for choosing engines and models before agent preparation."""
 
+import asyncio
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -12,11 +14,13 @@ from pathlib import Path
 from rich.markup import escape
 from textual import work
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import (
     Button, Checkbox, Footer, Header, Input, Label, RichLog, Select,
-    SelectionList, Static, TabbedContent, TabPane,
+    SelectionList, Static, TabbedContent, TabPane, Tabs,
 )
+from textual_tty import Terminal
 
 from source_manifest import ROOT
 from start_codex import make_prompt
@@ -24,7 +28,7 @@ from suite_store import create_suite, show_suite, validate_suite
 from tui_data import (
     answer_request, confirm_request, create_request, get_request, latest_request,
     list_engines, list_models, load_state, migrate_old_files, remove_engine,
-    remove_model, resolve_request, save_engine, save_model, save_state,
+    remove_model, request_results, resolve_request, save_engine, save_model, save_state,
 )
 
 TYPES = ("git", "package", "container", "remote", "local")
@@ -37,7 +41,7 @@ LOCATOR_LABELS = {
 class BenchmarkApp(App[None]):
     TITLE = "LLM Benchmarks"
     SUB_TITLE = "engines · models · suite"
-    BINDINGS = [("q", "quit", "Quit")]
+    BINDINGS = [("q", "quit", "Quit"), Binding("ctrl+g", "focus_agent_tabs", "Leave agent", priority=True)]
     CSS = """
     Screen { background: $surface; }
     TabbedContent { height: 1fr; }
@@ -52,6 +56,7 @@ class BenchmarkApp(App[None]):
     #messages { height: 5; border-top: solid $primary; }
     #suite-summary { margin: 1 0; }
     .agent-panel { height: 1fr; }
+    Terminal { height: 1fr; }
     .request-status { margin: 1 0; }
     .mode-button { dock: bottom; height: 3; margin: 1 0 0 0; }
     #agent-tabs { height: 1fr; }
@@ -72,6 +77,16 @@ class BenchmarkApp(App[None]):
             "model": self.state.get("model_mode", "agent"),
         }
         self.active_requests: set[str] = set()
+        self.terminals: dict[str, tuple[str, ...]] = {}
+
+    def embedded_terminal_available(self) -> bool:
+        return (self.console.color_system is not None
+                and os.environ.get("TERM", "").lower() not in {"", "dumb", "unknown"}
+                and "NO_COLOR" not in os.environ
+                and os.environ.get("CLICOLOR") != "0")
+
+    def action_focus_agent_tabs(self) -> None:
+        self.query_one("#agent-tabs Tabs", Tabs).focus()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -396,17 +411,23 @@ class BenchmarkApp(App[None]):
         if ident in self.active_requests:
             raise ValueError("This agent is already running")
         self.query_one(f"#{kind}-request", Input).value = ""
+        response_instruction = (
+            "In this interactive Codex terminal, ask the user directly if clarification is needed. "
+            "The program validates your attached results when you exit; do not change request status yourself. "
+            if self.embedded_terminal_available() else
+            "Return final JSON matching manifests/setup-response.schema.json: status ready with every "
+            "saved result ID and a concise verification message, or status needs_input with specific "
+            "questions and an empty result_ids array. The program validates and stores that response; "
+            "do not change request status yourself. "
+        )
         prompt = (
             f"Handle local benchmark {kind} setup request {ident}. Read AGENTS.md and "
             f"'uv run scripts/catalog_cli.py show-request {ident}'. The user's request may "
             "name several items. Find authoritative sources; do not guess if a name is "
             "ambiguous. Install or locate them, verify their identities and "
-            "local paths, then save each through catalog_cli.py add-engine/add-model. "
-            "Check every command exit status. Return final JSON matching "
-            "manifests/setup-response.schema.json: status ready with every saved result ID "
-            "and a concise verification message, or status needs_input with specific "
-            "questions and an empty result_ids array. The program validates and stores "
-            "that response; do not try to change the request status yourself. "
+            f"local paths, then save each through catalog_cli.py add-engine/add-model --request-id {ident}. "
+            f"For an existing saved result use catalog_cli.py attach-result {ident} RESULT_ID. "
+            "Check every command exit status. " + response_instruction +
             "Do not start benchmark measurements."
         )
         self.active_requests.add(ident)
@@ -417,6 +438,20 @@ class BenchmarkApp(App[None]):
         pane_id = f"agent-{ident}"
         log_id = f"log-{ident}"
         tabs = self.query_one("#agent-tabs", TabbedContent)
+        if self.embedded_terminal_available():
+            terminal_id = f"terminal-{ident}"
+            if self.query(f"#{pane_id}"):
+                await tabs.remove_pane(pane_id)
+            self.terminals[terminal_id] = ("setup", kind, ident)
+            await tabs.add_pane(TabPane(
+                f"{kind}: {ident[-8:]}",
+                Terminal(command=["codex", "--no-daemon", "-C", str(ROOT), prompt], id=terminal_id),
+                id=pane_id,
+            ))
+            tabs.active = pane_id
+            self.query_one(f"#{terminal_id}").focus()
+            self.message(f"Interactive Codex started for {kind} {ident}; Ctrl+G leaves its pane")
+            return
         if not self.query(f"#{pane_id}"):
             await tabs.add_pane(TabPane(
                 f"{kind}: {ident[-8:]}",
@@ -547,6 +582,25 @@ class BenchmarkApp(App[None]):
         pane_id = f"suite-agent-{stage}-{suite_id}"
         log_id = f"suite-log-{stage}-{suite_id}"
         tabs = self.query_one("#agent-tabs", TabbedContent)
+        if self.embedded_terminal_available():
+            try:
+                await asyncio.to_thread(self.preflight_suite, stage, suite_id, engines, models, check_updates)
+            except (ValueError, OSError) as exc:
+                self.message(f"{stage} failed: {exc}")
+                return
+            terminal_id = f"suite-terminal-{len(self.terminals)}"
+            self.terminals[terminal_id] = ("suite", stage, suite_id)
+            if self.query(f"#{pane_id}"):
+                await tabs.remove_pane(pane_id)
+            await tabs.add_pane(TabPane(
+                f"{stage}: {suite_id}",
+                Terminal(command=["codex", "--no-daemon", "-C", str(ROOT), prompt], id=terminal_id),
+                id=pane_id,
+            ))
+            tabs.active = pane_id
+            self.query_one(f"#{terminal_id}").focus()
+            self.message(f"Interactive Codex started for {stage} {suite_id}; Ctrl+G leaves its pane")
+            return
         if not self.query(f"#{pane_id}"):
             await tabs.add_pane(TabPane(
                 f"{stage}: {suite_id}",
@@ -557,19 +611,51 @@ class BenchmarkApp(App[None]):
         self.append_agent_log(log_id, f"[cyan]Starting {stage}…[/cyan]")
         self.run_suite_agent(stage, suite_id, engines, models, check_updates, prompt, log_id)
 
+    @staticmethod
+    def preflight_suite(stage: str, suite_id: str, engines: list[str], models: list[str],
+                        check_updates: bool) -> None:
+        if stage == "prepare":
+            create_suite(suite_id, engines, models, check_updates)
+        else:
+            frozen = show_suite(suite_id)
+            if frozen["suite"]["status"] != "frozen":
+                raise ValueError("Suite is not frozen; prepare it first")
+            if set(engines) != {x["engine_id"] for x in frozen["engines"]} or set(models) != {x["model_id"] for x in frozen["models"]}:
+                raise ValueError("Current selections differ from the frozen suite")
+            validate_suite(suite_id)
+
+    def on_terminal_process_exited(self, event: Terminal.ProcessExited) -> None:
+        terminal_id = getattr(event._sender, "id", None)
+        info = self.terminals.pop(terminal_id, None)
+        if not info:
+            return
+        if info[0] == "suite":
+            _, stage, suite_id = info
+            if stage == "prepare":
+                status = show_suite(suite_id)["suite"]["status"]
+                self.message(f"Suite {suite_id}: {status} (agent exit {event.exit_code})")
+            else:
+                self.message(f"Run agent exited with status {event.exit_code}; review its results")
+            return
+        _, kind, ident = info
+        ids = request_results(ident)
+        try:
+            if event.exit_code == 0 and ids:
+                resolve_request(ident, "ready", f"Verified {len(ids)} saved {kind} setup(s)", ids)
+            else:
+                reason = "No results were attached" if not ids else f"agent exit status {event.exit_code}"
+                resolve_request(ident, "needs_input", f"{reason}. Review the terminal and retry or provide a correction.")
+        except (ValueError, OSError) as exc:
+            resolve_request(ident, "needs_input", f"Agent result was rejected: {exc}. Correct it and retry.")
+        self.active_requests.discard(ident)
+        self.refresh_request(kind)
+        self.message(f"{kind.title()} request {ident}: {get_request(ident)['status']}")
+
     @work(thread=True)
     def run_suite_agent(self, stage: str, suite_id: str, engines: list[str], models: list[str],
                         check_updates: bool, prompt: str, log_id: str) -> None:
         try:
-            if stage == "prepare":
-                create_suite(suite_id, engines, models, check_updates)
-            else:
-                frozen = show_suite(suite_id)
-                if frozen["suite"]["status"] != "frozen":
-                    raise ValueError("Suite is not frozen; prepare it first")
-                if set(engines) != {x["engine_id"] for x in frozen["engines"]} or set(models) != {x["model_id"] for x in frozen["models"]}:
-                    raise ValueError("Current selections differ from the frozen suite")
-                validate_suite(suite_id)
+            self.preflight_suite(stage, suite_id, engines, models, check_updates)
             process = subprocess.Popen(
                 ["codex", "exec", "--json", "-C", str(ROOT), prompt],
                 cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
