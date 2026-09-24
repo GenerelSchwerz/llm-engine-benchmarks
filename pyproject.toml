@@ -4,4 +4,9 @@ version = "0.1.0"
 description = "Reproducible LLM engine benchmark guides and orchestration scripts"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "llama-benchy",
+]
+
+[tool.uv.sources]
+llama-benchy = { git = "https://github.com/eugr/llama-benchy", rev = "e9be344578cec17745066b220798b80a0d2686d3" }

@@ -170,16 +170,6 @@
         "ref": "main",
         "revision": "8364229686d74ec7495d2e726268bb329e759e84"
       }
-    },
-    {
-      "id": "llama-benchy",
-      "kind": "tool",
-      "source": {
-        "type": "git",
-        "url": "https://github.com/eugr/llama-benchy.git",
-        "ref": "main",
-        "revision": "e9be344578cec17745066b220798b80a0d2686d3"
-      }
     }
   ]
 }
