@@ -1,0 +1,8 @@
+/sources/
+/tools/
+/builds/
+/results/
+/models/
+**/__pycache__/
+*.pyc
+.venv/

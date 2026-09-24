@@ -1,0 +1,61 @@
+{
+  "suite_id": "",
+  "run_id": "",
+  "status": "not_yet_run",
+  "method": "coherent_text_or_llama_benchy",
+  "cohort": {
+    "host": "",
+    "os": "",
+    "gpu": "",
+    "driver": "",
+    "cuda_or_backend": "",
+    "system_ram_bytes": null,
+    "vram_ceiling_bytes": null
+  },
+  "fork": {
+    "id": "",
+    "repository": "",
+    "source_sha": "",
+    "build_command_file": "",
+    "server_command_file": "",
+    "binary_sha256": "",
+    "loaded_libraries_file": ""
+  },
+  "model": {
+    "family": "",
+    "artifact_url": "",
+    "artifact_sha256": "",
+    "quant": "",
+    "tokenizer_revision": "",
+    "draft_sha256": null
+  },
+  "workload": {
+    "fixture_sha256": "",
+    "request_file": "",
+    "actual_prompt_tokens": null,
+    "actual_output_tokens": null,
+    "parallel_requests": null,
+    "context_capacity": null
+  },
+  "outcome": {
+    "stop_reason": "",
+    "coherent": null,
+    "coherence_notes": "",
+    "intended_path_proven": null,
+    "errors": [],
+    "ttft_ms": null,
+    "prefill_tokens_per_s": null,
+    "decode_tokens_per_s": null,
+    "wall_ms": null,
+    "peak_vram_bytes": null,
+    "peak_ram_bytes": null,
+    "clean_teardown": null
+  },
+  "artifacts": {
+    "server_log": "",
+    "raw_response": "",
+    "benchy_json": null,
+    "gpu_samples": "",
+    "ram_samples": ""
+  }
+}
