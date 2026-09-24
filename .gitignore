@@ -6,3 +6,6 @@
 **/__pycache__/
 *.pyc
 .venv/
+/.benchmark-tui.json
+/manifests/models.json
+/manifests/suites/*/

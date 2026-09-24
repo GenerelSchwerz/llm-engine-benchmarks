@@ -15,9 +15,25 @@ uv sync
 uv run llama-benchy --version
 ```
 
-`uv sync` installs the benchmark client and its Python dependencies from the pinned commit in `uv.lock`. It does not install any LLM engine, model weights, or the optional Codex CLI.
+`uv sync` installs the TUI and benchmark client from `uv.lock`. It does not install any LLM engine, model weights, or the optional Codex CLI.
 
-## Choose an engine
+## Set up a suite
+
+```sh
+uv run scripts/tui.py
+```
+
+The minimal terminal UI has three tabs:
+
+| Tab | What you do |
+| --- | --- |
+| **Engines** | Add or edit Git, package, container, remote, and local engines; select, install, or check them. |
+| **Models** | Record artifact, revision, tokenizer, dtype, context, and compatible engines; select the setups to compare. |
+| **Suite** | Name the suite, choose whether to check upstream updates, then prepare or run it with Codex. |
+
+Use **Tab** to move between controls and **Space** to toggle a selection. Update checks are off by default. Model setups and TUI selections stay local; see the [model setup format](manifests/models.md). The UI writes engine changes to the editable [source list](manifests/sources.json). Preparing or running a suite requires the [Codex CLI](https://developers.openai.com/codex/cli/) to be installed and signed in. The UI does not publish results.
+
+For a manual or scripted workflow, use the same commands directly:
 
 ```sh
 uv run scripts/install_sources.py                 # list available engines
@@ -25,7 +41,7 @@ uv run scripts/install_sources.py --id ENGINE_ID  # install one pinned Git sourc
 uv run scripts/check_sources.py --id ENGINE_ID    # check its local pin
 ```
 
-Edit [the source list](manifests/sources.json) to add an engine. Git sources install into ignored local directories; package, container, remote, and local entries provide installation notes instead. See the [source format](manifests/source-schema.md) for examples.
+Git sources install into ignored local directories; package, container, remote, and local entries provide installation notes instead. See the [source format](manifests/source-schema.md) for examples.
 
 Then choose models and workloads in [the suite matrix](manifests/matrix.md), prepare an [engine guide](guides/TEMPLATE.md), and follow [the runbook](RUNBOOK.md). The runbook covers a coherent-text track and a separate [llama-benchy](https://github.com/eugr/llama-benchy) track. Engines without a compatible chat endpoint need an adapter for the latter.
 
@@ -34,19 +50,19 @@ Then choose models and workloads in [the suite matrix](manifests/matrix.md), pre
 With the [Codex CLI](https://developers.openai.com/codex/cli/) installed and signed in, start an interactive agent from this repository:
 
 ```sh
-uv run scripts/start_codex.py prepare my-suite --engine freetoken                 # use local pins
-uv run scripts/start_codex.py prepare my-suite --engine freetoken --check-updates # inspect upstream
+uv run scripts/start_codex.py prepare my-suite --engine freetoken --model my-model                 # use local pins
+uv run scripts/start_codex.py prepare my-suite --engine freetoken --model my-model --check-updates # inspect upstream
 uv run scripts/start_codex.py run my-suite                                        # run frozen plan
 ```
 
-`prepare` creates a frozen, model-specific run plan. Update checks are **off by default** to save time and agent usage; `--no-check-updates` states that choice explicitly. The local pin still has to match the manifest, and prior arguments are reusable only when the whole validated configuration matches. Review the plan before `run`. Add `--engine freetoken` (repeatable) to select engines; without it, the agent asks you to choose. Use `--dry-run` to see the prompt. The launcher does not publish results.
+`prepare` creates a frozen, model-specific run plan. Update checks are **off by default** to save time and agent usage; `--no-check-updates` states that choice explicitly. The local pin still has to match the manifest, and prior arguments are reusable only when the whole validated configuration matches. Review the plan before `run`. Repeat `--engine` and `--model` for more selections. Use `--dry-run` to see the prompt. The launcher does not publish results.
 
 ## Explore
 
 | Looking for… | Start here |
 | --- | --- |
 | The full benchmark process and agent handoff | [Runbook](RUNBOOK.md) |
-| Editable engines and the pinned benchmark tool | [Source list](manifests/sources.json) · [source format](manifests/source-schema.md) · [tooling](manifests/tooling.md) |
+| Editable engines, models, and the pinned benchmark tool | [Source list](manifests/sources.json) · [source format](manifests/source-schema.md) · [model setups](manifests/models.md) · [tooling](manifests/tooling.md) |
 | Existing setup examples | [Engine catalog](manifests/engines.md) · [guides](guides/) |
 | Prompts and result fields | [Fixtures](fixtures/README.md) · [result template](manifests/run-template.json) |
 | Adding an engine or submitting results | [Contributing](CONTRIBUTING.md) |

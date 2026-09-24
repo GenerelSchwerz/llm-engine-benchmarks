@@ -1,6 +1,6 @@
 # LLM engine benchmark workspace
 
-- Read `RUNBOOK.md`, `manifests/sources.json`, the suite's model/workload manifest, and each selected engine guide before running.
+- Read `RUNBOOK.md`, `manifests/sources.json`, `manifests/models.json` when present, the suite's model/workload manifest, and each selected engine guide before running. The TUI selects IDs; it does not validate runtime compatibility.
 - Use `uv run scripts/<name>.py` for this repository's Python entry points. The pinned llama-benchy package is installed from `uv.lock`.
 - Keep source, build, runtime environment, model artifacts, commands, result, and revision separate for every engine.
 - Research agents report exact per-engine/per-model command packets. The coordinator freezes a plan; one execution agent runs it on each machine.

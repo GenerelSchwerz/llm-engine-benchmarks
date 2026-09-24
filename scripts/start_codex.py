@@ -9,17 +9,19 @@ import sys
 from pathlib import Path
 
 from source_manifest import ROOT, load_sources
+from tui_data import load_models
 
 
-def make_prompt(stage: str, suite_id: str, engines: list[str], check_updates: bool) -> str:
+def make_prompt(stage: str, suite_id: str, engines: list[str], models: list[str], check_updates: bool) -> str:
     selection = (
         ", ".join(engines) if engines else
         "the engines frozen in the suite plan" if stage == "run" else
         "only the engines the user selects for this suite"
     )
+    model_selection = ", ".join(models) if models else "the models selected for the suite"
     intro = (
-        f"Work on benchmark suite {suite_id!r} for {selection}. "
-        "Read AGENTS.md, RUNBOOK.md, manifests/sources.json, manifests/matrix.md, "
+        f"Work on benchmark suite {suite_id!r} for {selection} and {model_selection}. "
+        "Read AGENTS.md, RUNBOOK.md, manifests/sources.json, manifests/models.json if present, manifests/matrix.md, "
         "and the relevant engine guides. Follow the runbook's fan-out, coalescing, "
         "and single-runner handoff. Use research subagents when available; otherwise "
         "complete the reviews sequentially and say so. Preserve existing work and "
@@ -65,6 +67,7 @@ def main() -> int:
     parser.add_argument("stage", choices=("prepare", "run"), help="prepare commands or run a frozen suite")
     parser.add_argument("suite_id", help="name for a suite revision, for example qwen-sept-2026")
     parser.add_argument("--engine", action="append", default=[], help="engine ID to include; repeatable")
+    parser.add_argument("--model", action="append", default=[], help="model setup ID to include; repeatable")
     updates = parser.add_mutually_exclusive_group()
     updates.add_argument("--check-updates", dest="check_updates", action="store_true",
                          help="check selected upstream refs and review changed revisions during prepare")
@@ -79,11 +82,15 @@ def main() -> int:
     unknown = set(args.engine) - known
     if unknown:
         parser.error(f"unknown engine IDs: {', '.join(sorted(unknown))}")
+    known_models = {item["id"] for item in load_models()}
+    unknown_models = set(args.model) - known_models
+    if unknown_models:
+        parser.error(f"unknown model IDs: {', '.join(sorted(unknown_models))}")
     if args.stage == "run" and args.check_updates:
         parser.error("update checks belong to prepare; run uses the frozen suite plan")
     if args.stage == "run" and not (ROOT / "manifests/suites" / args.suite_id).is_dir():
         parser.error(f"suite directory missing: manifests/suites/{args.suite_id}; run prepare first")
-    prompt = make_prompt(args.stage, args.suite_id, args.engine, args.check_updates)
+    prompt = make_prompt(args.stage, args.suite_id, args.engine, args.model, args.check_updates)
     command = ["codex", "-C", str(ROOT), prompt]
     if args.dry_run:
         print("Command:", shlex.join(command[:3]), "<generated prompt>")

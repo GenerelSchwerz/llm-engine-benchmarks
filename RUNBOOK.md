@@ -1,6 +1,6 @@
 # LLM engine benchmark runbook
 
-Use this guide for a reproducible comparison of any LLM inference engines. Start with the editable [source list](manifests/sources.json), [engine catalog](manifests/engines.md), [suite matrix](manifests/matrix.md), [tool pin](manifests/tooling.md), and the selected engine guides. The included MoE guides are research examples; no new live sweep is implied by them.
+Use this guide for a reproducible comparison of any LLM inference engines. Start with the editable [source list](manifests/sources.json), local [model setups](manifests/models.md), [engine catalog](manifests/engines.md), [suite matrix](manifests/matrix.md), [tool pin](manifests/tooling.md), and the selected engine guides. The included MoE guides are research examples; no new live sweep is implied by them. Humans can use `uv run scripts/tui.py` to manage engine and model selections and launch the Codex preparation or run stage.
 
 ## Fan-out, coalescing, and one runner
 
