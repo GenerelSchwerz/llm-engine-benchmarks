@@ -4,7 +4,7 @@
 | --- | --- | --- | --- |
 | llama-benchy | https://github.com/eugr/llama-benchy | `e9be344578cec17745066b220798b80a0d2686d3` | OpenAI-compatible endpoint benchmark |
 
-The checkout is in `tools/llama-benchy`. Its [README](https://github.com/eugr/llama-benchy) documents `--pp`, `--tg`, `--depth`, `--runs`, `--concurrency`, `--tokenizer`, JSON output, and a built-in coherence probe. It only uses `/v1/chat/completions`. The built-in probe does not replace the separate coherent-text track in this suite.
+The editable install pin is in [`sources.json`](sources.json), with kind `tool`; run `python scripts/install_sources.py --id llama-benchy` to create the ignored `tools/llama-benchy` checkout. Its [README](https://github.com/eugr/llama-benchy) documents `--pp`, `--tg`, `--depth`, `--runs`, `--concurrency`, `--tokenizer`, JSON output, and a built-in coherence probe. It only uses `/v1/chat/completions`. The built-in probe does not replace the separate coherent-text track in this suite.
 
 Before a live run, install the pinned checkout in an isolated environment and capture `llama-benchy --help` and its tool version. Do not track a moving `main` or PyPI release during a sweep. Record the corpus URL, local cached corpus hash, tokenizer revision, and actual output token counts. Do not assume `--exact-tg` works on every server; check its `min_tokens` and `ignore_eos` behavior for each runtime first.
 

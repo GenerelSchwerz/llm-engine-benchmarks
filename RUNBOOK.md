@@ -1,6 +1,6 @@
 # Cross-fork benchmark runbook
 
-This is the top-level guide for collecting fork updates, preparing model-specific commands, running the two benchmark methods, and publishing verified results. Read [the source inventory](manifests/forks.md), [model matrix](manifests/matrix.md), [tooling snapshot](manifests/tooling.md), and the relevant file in `guides/` before acting. At the 2026-09-24 collection snapshot, this workspace has only source and guide preparation; live model runs await a later user instruction.
+This is the top-level guide for collecting fork updates, preparing model-specific commands, running the two benchmark methods, and publishing verified results. Read the editable [source list](manifests/sources.json), [annotated inventory](manifests/forks.md), [model matrix](manifests/matrix.md), [tooling snapshot](manifests/tooling.md), and the relevant file in `guides/` before acting. At the 2026-09-24 collection snapshot, this workspace has only source and guide preparation; live model runs await a later user instruction.
 
 ## Roles and handoff
 
@@ -19,7 +19,7 @@ One coordinating agent owns the suite revision and publication. Fork research fa
 
 The coordinator checks that every candidate has an exact revision, model artifact, benchmark mode, per-model command, tuning rationale, and support status. It rejects a packet if flags are from another fork, the command uses a moving ref, a quant or checkpoint differs without an explicit comparison tier, or the memory target is not stated. Resolve conflicts in the fork guide before scheduling. Freeze the accepted packets and model hashes in a dated `manifests/suites/<suite-id>/` directory. An update after this point starts a *new* suite revision.
 
-The execution agent receives only that frozen plan. It may reject an invalid command and request a revised packet; it does not improvise performance flags during a measured run. It owns build isolation, single-GPU/process locking (including the existing `/tmp/beellama-single-gpu.lock` on this host), warmup, request execution, raw collection, teardown, and the final result ledger.
+The execution agent receives only that frozen plan. It may reject an invalid command and request a revised packet; it does not improvise performance flags during a measured run. It owns build isolation, a machine-specific single-GPU/process lock, warmup, request execution, raw collection, teardown, and the final result ledger.
 
 ## Fork-specific guide contract
 
@@ -73,8 +73,8 @@ Compare within the same hardware/OS cohort and under a stated memory envelope. R
 
 ## Wiki publication after an explicit request
 
-The execution agent produces a proposed result table and links to the retained raw local artifacts. The coordinator checks its arithmetic and qualifications, fetches the current wiki (local checkout: `/home/gencoolpc/llama.cpp.wiki`, remote: `https://github.com/GenerelSchwerz/llama.cpp.wiki.git`), and edits only affected benchmark/model/setup pages plus `Home.md`. Check `git status`, fetch, and fast-forward before editing; preserve user edits and dated historical tables. Likely pages include `Benchmark-Comparison-Showcase.md`, model reports, `Owner-Verified-Benchmark-Evidence.md`, `Benchmark-Future-Coverage.md`, and `Notable-Runs.md`. State exact commits, artifact hashes, hardware, method, memory match, negative cases, and limits. Commit and push the wiki only when the user has asked to publish that sweep; re-fetch GitHub pages to verify the rendered data and links. Rebuild the repository README after the wiki's current claims are settled.
+The execution agent produces a proposed result table and links to the retained raw local artifacts. The coordinator checks its arithmetic and qualifications, fetches the current destination wiki (for this project's owner: `https://github.com/GenerelSchwerz/llama.cpp.wiki.git`), and edits only affected benchmark/model/setup pages plus `Home.md`. Check `git status`, fetch, and fast-forward before editing; preserve user edits and dated historical tables. Likely pages include `Benchmark-Comparison-Showcase.md`, model reports, `Owner-Verified-Benchmark-Evidence.md`, `Benchmark-Future-Coverage.md`, and `Notable-Runs.md`. State exact commits, artifact hashes, hardware, method, memory match, negative cases, and limits. Commit and push the wiki only when the user has asked to publish that sweep; re-fetch GitHub pages to verify the rendered data and links. Rebuild the repository README after the wiki's current claims are settled.
 
 ## One-sentence future assignment
 
-"Read `/home/gencoolpc/cross-fork-benchmarks/RUNBOOK.md`; fan out source/arg review for every public fork, coalesce frozen model-specific command packets, use one execution agent to rerun both coherent-text and llama-benchy tracks, verify and retain results, then publish the qualified sweep to the GitHub wiki."
+"Read this repository's `RUNBOOK.md`; fan out source/arg review for every listed public fork, coalesce frozen model-specific command packets, use one execution agent to rerun both coherent-text and llama-benchy tracks, verify and retain results, then publish the qualified sweep to the designated GitHub wiki."

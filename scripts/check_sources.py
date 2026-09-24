@@ -3,17 +3,11 @@
 
 import argparse
 import json
-import re
 import subprocess
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ROW = re.compile(
-    r"^\| `(?P<id>[^`]+)` \| \[`[^`]+`\]"
-    r"\(https://github\.com/(?P<repo>[^)]+)/tree/(?P<branch>[^)]+)\)"
-    r" \| `(?P<sha>[0-9a-f]{40})` \|"
-)
 
 
 def command(*args: str) -> subprocess.CompletedProcess[str]:
@@ -26,12 +20,10 @@ def main() -> int:
     args = parser.parse_args()
 
     entries = []
-    for line in (ROOT / "manifests/forks.md").read_text().splitlines():
-        match = ROW.match(line)
-        if not match:
-            continue
-        item = match.groupdict()
-        source = ROOT / "sources" / item["id"]
+    source_list = json.loads((ROOT / "manifests/sources.json").read_text())["sources"]
+    for listed in source_list:
+        item = dict(listed)
+        source = ROOT / ("tools" if item["kind"] == "tool" else "sources") / item["id"]
         item["source"] = str(source)
         if not source.is_dir():
             item["local_status"] = "missing"

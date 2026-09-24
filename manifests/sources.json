@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "id": "upstream",
+      "repo": "ggml-org/llama.cpp",
+      "branch": "master",
+      "sha": "84e76d8a23162eca70490da131945ebec1f09bf4",
+      "kind": "backend"
+    },
+    {
+      "id": "leloch-v1",
+      "repo": "leloch/llama.cpp",
+      "branch": "moe-cache-pr",
+      "sha": "a01eb26468a6cb2bf2c3bfd1cc3b5d9e64daefcd",
+      "kind": "backend"
+    },
+    {
+      "id": "leloch-v2",
+      "repo": "leloch/llama.cpp",
+      "branch": "moe-cache-v2-pr",
+      "sha": "e3096b046bb809f7f80bc47801f6579aed1cbc60",
+      "kind": "backend"
+    },
+    {
+      "id": "lidenburg",
+      "repo": "Lidenburg/llama.cpp",
+      "branch": "moe-expert-caching",
+      "sha": "e85e4d90cd44a8c8332093b0c97a53fa13137f5e",
+      "kind": "backend"
+    },
+    {
+      "id": "generelschwerz",
+      "repo": "GenerelSchwerz/llama.cpp",
+      "branch": "moe-cache",
+      "sha": "e59a4b14ca9d681b7631d0d729baf95d1e2a3701",
+      "kind": "backend"
+    },
+    {
+      "id": "thecodacus",
+      "repo": "thecodacus/llama.cpp",
+      "branch": "perf",
+      "sha": "27c54b4bbcefadedcec6397477cc2e866c1db716",
+      "kind": "backend"
+    },
+    {
+      "id": "thetom",
+      "repo": "TheTom/llama-cpp-turboquant",
+      "branch": "feature/turboquant-kv-cache",
+      "sha": "a3d5603d110bda29222d2011596cdc84d7fa532d",
+      "kind": "backend"
+    },
+    {
+      "id": "giveen-current",
+      "repo": "giveen/llama-cpp-turboquant",
+      "branch": "feature/turboquant-kv-cache",
+      "sha": "bcc337d69f4065cb37f2aa5bd17c34fed87bd6f4",
+      "kind": "backend"
+    },
+    {
+      "id": "miltos22",
+      "repo": "miltos22/llama.cpp-wackMall-merge-request",
+      "branch": "master",
+      "sha": "6cacc5edbb2e265133491f0e4a5ba9a470f771a2",
+      "kind": "backend"
+    },
+    {
+      "id": "atomic-germ",
+      "repo": "Atomic-Germ/llama.cpp",
+      "branch": "feat/qwen38-moe-gpu-pill-streaming",
+      "sha": "cd252aa7e0e01d74647eeaa3c9634ff23979ea06",
+      "kind": "backend"
+    },
+    {
+      "id": "mclaudod",
+      "repo": "mclaudod/llama.cpp",
+      "branch": "moe-hot-cache",
+      "sha": "b5516876f10c7ceea1ba4695cdcdc80f71c71c5f",
+      "kind": "backend"
+    },
+    {
+      "id": "freetoken",
+      "repo": "FlashML-org/FreeToken",
+      "branch": "main",
+      "sha": "cee23bf44a86e48d70f8fda3ca3b6d4d9890072e",
+      "kind": "backend"
+    },
+    {
+      "id": "ktransformers",
+      "repo": "kvcache-ai/ktransformers",
+      "branch": "main",
+      "sha": "c40722bf04c494f2492b7eb9e86ef01a4ede45b3",
+      "kind": "backend"
+    },
+    {
+      "id": "buun",
+      "repo": "spiritbuun/buun-llama-cpp",
+      "branch": "master",
+      "sha": "2ef0317dd91e2ca4732fffa456dc5e2311db41c7",
+      "kind": "backend"
+    },
+    {
+      "id": "csantiago78",
+      "repo": "csantiago78/llama.cpp",
+      "branch": "moe-expert-cache",
+      "sha": "bccbacdb8945680f1cfc7e6bffd1e59014705750",
+      "kind": "backend"
+    },
+    {
+      "id": "danielhanchen-mtp",
+      "repo": "danielhanchen/llama.cpp",
+      "branch": "qwen4exp/mtp",
+      "sha": "6fcaa16f4b360649933a54d1f91ad40ed35c0e11",
+      "kind": "backend"
+    },
+    {
+      "id": "guanaco",
+      "repo": "Atomic-Germ/Guanaco",
+      "branch": "main",
+      "sha": "8364229686d74ec7495d2e726268bb329e759e84",
+      "kind": "backend"
+    },
+    {
+      "id": "llama-benchy",
+      "repo": "eugr/llama-benchy",
+      "branch": "main",
+      "sha": "e9be344578cec17745066b220798b80a0d2686d3",
+      "kind": "tool"
+    }
+  ]
+}

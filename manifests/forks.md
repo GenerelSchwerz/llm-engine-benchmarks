@@ -1,6 +1,6 @@
 # Fork source inventory
 
-Snapshot: 2026-09-24. The source is [llama.cpp discussion #24528](https://github.com/ggml-org/llama.cpp/discussions/24528), including all 41 top-level comments and 65 replies visible through the GitHub API at inventory time. `sources/` contains shallow, partial clones; their Git `HEAD`s are the fixed source snapshot for a benchmark run. No builds or benchmarks are implied by inclusion here.
+Snapshot: 2026-09-24. The source is [llama.cpp discussion #24528](https://github.com/ggml-org/llama.cpp/discussions/24528), including all 41 top-level comments and 65 replies visible through the GitHub API at inventory time. The editable install list is [`sources.json`](sources.json); keep its pins and this annotated table aligned. Local `sources/` checkouts are ignored by Git. No builds or benchmarks are implied by inclusion here.
 
 | ID / local source | Repository and tracking branch | Pinned `HEAD` | Relationship / benchmark role | Discussion source | Availability |
 |---|---|---|---|---|---|
