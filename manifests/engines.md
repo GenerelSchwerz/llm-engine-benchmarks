@@ -8,6 +8,6 @@ The editable installation list is [sources.json](sources.json). This catalog exp
 | FreeToken | `freetoken` | Independent native-checkpoint runtime with CPU/GPU/hybrid strategies |
 | KTransformers | `ktransformers` | Independent heterogeneous runtime |
 | Guanaco | `guanaco` | Companion project requiring its own deployment and model contract |
-| llama-benchy | Installed by `uv sync --locked` | Benchmark client, pinned in `pyproject.toml` and `uv.lock` rather than the engine list |
+| llama-benchy | Installed by `uv sync` | Benchmark client, pinned in `pyproject.toml` and `uv.lock` rather than the engine list |
 
 A candidate enters a comparison only after its exact version, model artifact, tokenizer, hardware cohort, workload, and output checks are recorded. A dependency or companion project is not automatically a runnable comparison arm. Source inclusion alone proves no build, model support, or speed claim.

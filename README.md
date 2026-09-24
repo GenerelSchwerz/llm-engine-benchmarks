@@ -11,8 +11,8 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Git, t
 ```sh
 git clone https://github.com/GenerelSchwerz/llm-engine-benchmarks.git
 cd llm-engine-benchmarks
-uv sync --locked
-uv run --locked llama-benchy --version
+uv sync
+uv run llama-benchy --version
 ```
 
 `uv sync` installs the benchmark client and its Python dependencies from the pinned commit in `uv.lock`. It does not install any LLM engine, model weights, or the optional Codex CLI.
@@ -20,9 +20,9 @@ uv run --locked llama-benchy --version
 ## Choose an engine
 
 ```sh
-uv run --locked scripts/install_sources.py                 # list available engines
-uv run --locked scripts/install_sources.py --id ENGINE_ID  # install one pinned Git source
-uv run --locked scripts/check_sources.py --id ENGINE_ID    # check its local pin
+uv run scripts/install_sources.py                 # list available engines
+uv run scripts/install_sources.py --id ENGINE_ID  # install one pinned Git source
+uv run scripts/check_sources.py --id ENGINE_ID    # check its local pin
 ```
 
 Edit [the source list](manifests/sources.json) to add an engine. Git sources install into ignored local directories; package, container, remote, and local entries provide installation notes instead. See the [source format](manifests/source-schema.md) for examples.
@@ -34,9 +34,9 @@ Then choose models and workloads in [the suite matrix](manifests/matrix.md), pre
 With the [Codex CLI](https://developers.openai.com/codex/cli/) installed and signed in, start an interactive agent from this repository:
 
 ```sh
-uv run --locked scripts/start_codex.py prepare my-suite --engine freetoken                 # use local pins
-uv run --locked scripts/start_codex.py prepare my-suite --engine freetoken --check-updates # inspect upstream
-uv run --locked scripts/start_codex.py run my-suite                                        # run frozen plan
+uv run scripts/start_codex.py prepare my-suite --engine freetoken                 # use local pins
+uv run scripts/start_codex.py prepare my-suite --engine freetoken --check-updates # inspect upstream
+uv run scripts/start_codex.py run my-suite                                        # run frozen plan
 ```
 
 `prepare` creates a frozen, model-specific run plan. Update checks are **off by default** to save time and agent usage; `--no-check-updates` states that choice explicitly. The local pin still has to match the manifest, and prior arguments are reusable only when the whole validated configuration matches. Review the plan before `run`. Add `--engine freetoken` (repeatable) to select engines; without it, the agent asks you to choose. Use `--dry-run` to see the prompt. The launcher does not publish results.
