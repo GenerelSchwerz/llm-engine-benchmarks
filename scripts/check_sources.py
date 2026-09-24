@@ -15,9 +15,17 @@ def command(*args: str) -> subprocess.CompletedProcess[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--remote", action="store_true", help="check Git tracking refs with git ls-remote")
+    parser.add_argument("--id", action="append", help="check one source ID; repeatable")
     args = parser.parse_args()
+    sources = load_sources()
+    if args.id:
+        requested = set(args.id)
+        unknown = requested - {item["id"] for item in sources}
+        if unknown:
+            parser.error(f"unknown IDs: {', '.join(sorted(unknown))}")
+        sources = [item for item in sources if item["id"] in requested]
     entries = []
-    for listed in load_sources():
+    for listed in sources:
         item = dict(listed)
         source = item["source"]
         item["local_path"] = str(destination(item))

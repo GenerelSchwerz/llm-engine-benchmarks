@@ -9,9 +9,9 @@ The suite records exact versions, model artifacts, commands, prompts, outputs, t
 ```sh
 git clone https://github.com/GenerelSchwerz/llm-engine-benchmarks.git
 cd llm-engine-benchmarks
-python scripts/install_sources.py                 # list available engines and tools
-python scripts/install_sources.py --id ENGINE_ID  # install one pinned Git source
-python scripts/check_sources.py --remote          # check local pins and tracking refs
+uv run scripts/install_sources.py                 # list available engines and tools
+uv run scripts/install_sources.py --id ENGINE_ID  # install one pinned Git source
+uv run scripts/check_sources.py --id ENGINE_ID    # check its local pin
 ```
 
 Edit [the source list](manifests/sources.json) to add an engine. Git sources install into ignored local directories; package, container, remote, and local entries provide installation notes instead. See the [source format](manifests/source-schema.md) for examples.
@@ -20,14 +20,15 @@ Then choose models and workloads in [the suite matrix](manifests/matrix.md), pre
 
 ## Run with Codex
 
-With the [Codex CLI](https://developers.openai.com/codex/cli/) installed and signed in, start an interactive agent from this repository:
+With [uv](https://docs.astral.sh/uv/) and the [Codex CLI](https://developers.openai.com/codex/cli/) installed, start an interactive agent from this repository:
 
 ```sh
-python scripts/start_codex.py prepare my-suite
-python scripts/start_codex.py run my-suite
+uv run scripts/start_codex.py prepare my-suite --engine freetoken                 # use local pins
+uv run scripts/start_codex.py prepare my-suite --engine freetoken --check-updates # inspect upstream
+uv run scripts/start_codex.py run my-suite                                        # run frozen plan
 ```
 
-`prepare` checks sources and creates a frozen, model-specific run plan. Review that plan, then use `run` for measurements and evidence collection. Add `--engine freetoken` to narrow the suite, or `--dry-run` to see the agent prompt. The launcher does not publish results.
+`prepare` creates a frozen, model-specific run plan. Update checks are **off by default** to save time and agent usage; `--no-check-updates` states that choice explicitly. The local pin still has to match the manifest, and prior arguments are reusable only when the whole validated configuration matches. Review the plan before `run`. Add `--engine freetoken` (repeatable) to select engines; without it, the agent asks you to choose. Use `--dry-run` to see the prompt. The launcher does not publish results.
 
 ## Explore
 

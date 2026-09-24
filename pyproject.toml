@@ -1,0 +1,7 @@
+[project]
+name = "llm-engine-benchmarks"
+version = "0.1.0"
+description = "Reproducible LLM engine benchmark guides and orchestration scripts"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []

@@ -1,6 +1,7 @@
 # LLM engine benchmark workspace
 
 - Read `RUNBOOK.md`, `manifests/sources.json`, the suite's model/workload manifest, and each selected engine guide before running.
+- Use `uv run scripts/<name>.py` for this repository's Python entry points; keep `uv.lock` in sync with `pyproject.toml`.
 - Keep source, build, runtime environment, model artifacts, commands, result, and revision separate for every engine.
 - Research agents report exact per-engine/per-model command packets. The coordinator freezes a plan; one execution agent runs it on each machine.
 - Use coherent generation and the pinned llama-benchy track when its chat protocol is supported or adapted. Record an explicit unavailable result otherwise.

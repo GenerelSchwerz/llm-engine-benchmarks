@@ -2,17 +2,21 @@
 """Start an interactive Codex session for one benchmark suite stage."""
 
 import argparse
-import os
 import shlex
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 from source_manifest import ROOT, load_sources
 
 
-def make_prompt(stage: str, suite_id: str, engines: list[str]) -> str:
-    selection = ", ".join(engines) if engines else "the engines selected in manifests/sources.json"
+def make_prompt(stage: str, suite_id: str, engines: list[str], check_updates: bool) -> str:
+    selection = (
+        ", ".join(engines) if engines else
+        "the engines frozen in the suite plan" if stage == "run" else
+        "only the engines the user selects for this suite"
+    )
     intro = (
         f"Work on benchmark suite {suite_id!r} for {selection}. "
         "Read AGENTS.md, RUNBOOK.md, manifests/sources.json, manifests/matrix.md, "
@@ -21,10 +25,27 @@ def make_prompt(stage: str, suite_id: str, engines: list[str]) -> str:
         "complete the reviews sequentially and say so. Preserve existing work and "
         "report exact artifacts, unresolved inputs, and next steps. "
     )
+    if not engines and stage == "prepare":
+        intro += (
+            "No engine IDs were supplied. Ask the user to select engines before any "
+            "source review or update checks; do not process the whole catalog by default. "
+        )
+    update_instruction = (
+        "Check tracking refs for selected Git engines and verify versions for selected "
+        "non-Git engines. Review upstream changes only where a revision moved. Do not "
+        "change manifest pins silently. "
+        if check_updates else
+        "Use the pinned local sources without checking upstream for updates. Do not "
+        "query remote tracking refs or spend agent time reviewing upstream changes. "
+        "Reuse prior arguments only if the exact engine, model, tool, adapter, workload, "
+        "and hardware inputs match a validated run; otherwise review the pinned local "
+        "source and mark the command as a draft. "
+    )
     stages = {
         "prepare": (
-            "Prepare a new frozen suite revision: check sources, review changed engine "
-            "arguments per model and method, coalesce command packets, and record the "
+            "Prepare a new frozen suite revision. " + update_instruction +
+            "Check local source pins, return packets per model and method, review code "
+            "only where prior validation cannot be reused, coalesce the packets, and record the "
             "plan and required model/hardware inputs. Do not build engines, run model "
             "benchmarks, or publish results in this stage."
         ),
@@ -44,6 +65,12 @@ def main() -> int:
     parser.add_argument("stage", choices=("prepare", "run"), help="prepare commands or run a frozen suite")
     parser.add_argument("suite_id", help="name for a suite revision, for example qwen-sept-2026")
     parser.add_argument("--engine", action="append", default=[], help="engine ID to include; repeatable")
+    updates = parser.add_mutually_exclusive_group()
+    updates.add_argument("--check-updates", dest="check_updates", action="store_true",
+                         help="check selected upstream refs and review changed revisions during prepare")
+    updates.add_argument("--no-check-updates", dest="check_updates", action="store_false",
+                         help="use local pins without upstream checks (default)")
+    parser.set_defaults(check_updates=False)
     parser.add_argument("--dry-run", action="store_true", help="print the command and prompt without launching Codex")
     args = parser.parse_args()
     if not args.suite_id or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for ch in args.suite_id):
@@ -52,9 +79,11 @@ def main() -> int:
     unknown = set(args.engine) - known
     if unknown:
         parser.error(f"unknown engine IDs: {', '.join(sorted(unknown))}")
+    if args.stage == "run" and args.check_updates:
+        parser.error("update checks belong to prepare; run uses the frozen suite plan")
     if args.stage == "run" and not (ROOT / "manifests/suites" / args.suite_id).is_dir():
         parser.error(f"suite directory missing: manifests/suites/{args.suite_id}; run prepare first")
-    prompt = make_prompt(args.stage, args.suite_id, args.engine)
+    prompt = make_prompt(args.stage, args.suite_id, args.engine, args.check_updates)
     command = ["codex", "-C", str(ROOT), prompt]
     if args.dry_run:
         print("Command:", shlex.join(command[:3]), "<generated prompt>")
@@ -64,8 +93,7 @@ def main() -> int:
     if executable is None:
         print("Codex CLI is not installed or not on PATH. See https://developers.openai.com/codex/cli/", file=sys.stderr)
         return 1
-    os.execv(executable, [executable, *command[1:]])
-    return 0
+    return subprocess.call([executable, *command[1:]])
 
 
 if __name__ == "__main__":
