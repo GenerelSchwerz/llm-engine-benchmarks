@@ -24,7 +24,7 @@ from textual_tty import Terminal
 
 from source_manifest import ROOT
 from start_codex import make_prompt
-from suite_store import create_suite, show_suite, validate_suite
+from suite_store import create_suite, preparation_signal, show_suite, validate_suite
 from tui_data import (
     answer_request, completion_signal, confirm_request, create_request, get_request, latest_request,
     list_engines, list_models, load_state, migrate_old_files, remove_engine,
@@ -76,6 +76,7 @@ class BenchmarkApp(App[None]):
     .buttons { height: 3; margin: 1 0; }
     Button { margin-right: 1; }
     #messages { height: 5; border-top: solid $primary; }
+    #suite-stage-status { height: 1; color: $text-muted; }
     #suite-summary { margin: 1 0; }
     .agent-panel { height: 1fr; }
     Terminal { height: 1fr; }
@@ -100,6 +101,7 @@ class BenchmarkApp(App[None]):
         }
         self.active_requests: set[str] = set()
         self.terminals: dict[str, tuple[str, ...]] = {}
+        self.announced_preparations: set[str] = set()
         self.picker_filters = {"engine": "", "model": ""}
         self.selection_cache = {
             "engine": set(self.state.get("engines", [])),
@@ -180,7 +182,7 @@ class BenchmarkApp(App[None]):
                         yield Button("Remove", id="model-remove", variant="error")
                 yield Button("Switch to manual setup", id="model-mode", classes="mode-button")
             with TabPane("Suite", id="suite"):
-                yield Label("Run one suite at a time", classes="section-title")
+                yield Label("Prepare a suite, then run its frozen plan", classes="section-title")
                 yield Label("Suite name", classes="field-label")
                 yield Input(id="suite-id", placeholder="e.g. september-sweep")
                 yield Checkbox("Check upstream updates during preparation", id="check-updates")
@@ -193,6 +195,7 @@ class BenchmarkApp(App[None]):
                 with TabbedContent(id="agent-tabs"):
                     with TabPane("Overview", id="agent-overview"):
                         yield Static("Agent output appears here while setup requests run.")
+        yield Static("No suite selected", id="suite-stage-status")
         yield RichLog(id="messages", highlight=True, markup=True)
         yield Footer()
 
@@ -207,6 +210,7 @@ class BenchmarkApp(App[None]):
         self.refresh_request("model")
         self.set_interval(1, self.poll_requests)
         self.update_summary()
+        self.poll_suite_progress()
         self.message("Ready. Add or select an engine and model, then prepare the suite.")
 
     def message(self, value: str) -> None:
@@ -371,10 +375,38 @@ class BenchmarkApp(App[None]):
             self.message(f"{kind.title()} request {request['id']}: {get_request(request['id'])['status']}")
         self.refresh_request("engine")
         self.refresh_request("model")
+        self.poll_suite_progress()
+
+    def poll_suite_progress(self) -> None:
+        suite_id = self.value("suite-id")
+        banner = self.query_one("#suite-stage-status", Static)
+        if not suite_id:
+            banner.update("No suite selected")
+            return
+        try:
+            status = show_suite(suite_id)["suite"]["status"]
+        except ValueError:
+            banner.update(f"{escape(suite_id)} · no suite plan yet")
+            return
+        if status != "frozen":
+            banner.update(f"{escape(suite_id)} · draft plan · preparation in progress")
+            return
+        signal = preparation_signal(suite_id)
+        if signal is None:
+            banner.update(f"{escape(suite_id)} · plan frozen · agent completion not recorded")
+            return
+        session_open = any(info == ("suite", "prepare", suite_id) for info in self.terminals.values())
+        tail = " · Codex terminal open" if session_open else ""
+        banner.update(f"[green]{escape(suite_id)} · agent reported preparation complete · plan frozen{tail}[/green]")
+        if suite_id not in self.announced_preparations:
+            self.announced_preparations.add(suite_id)
+            self.message(f"[green]Preparation complete: {escape(suite_id)}. Frozen plan is ready for review.[/green]")
+            self.notify(f"{suite_id}: preparation complete", severity="information")
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "suite-id":
             self.remember()
+            self.poll_suite_progress()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         action = event.button.id
@@ -726,7 +758,8 @@ class BenchmarkApp(App[None]):
             _, stage, suite_id = info
             if stage == "prepare":
                 status = show_suite(suite_id)["suite"]["status"]
-                self.message(f"Suite {suite_id}: {status} (agent exit {event.exit_code})")
+                self.poll_suite_progress()
+                self.message(f"Codex preparation session exited ({event.exit_code}); suite {suite_id}: {status}")
             else:
                 self.message(f"Run agent exited with status {event.exit_code}; review its results")
             return
@@ -778,6 +811,7 @@ class BenchmarkApp(App[None]):
             status = show_suite(suite_id)["suite"]["status"]
             color = "green" if status == "frozen" else "yellow"
             self.append_agent_log(log_id, f"[{color}]Suite {status}[/{color}]")
+            self.poll_suite_progress()
             self.message(f"Suite {suite_id}: {status}")
         else:
             color = "cyan" if code == 0 else "red"

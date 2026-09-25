@@ -43,6 +43,11 @@ def database(path: Path = DB) -> Iterator[sqlite3.Connection]:
             command_json TEXT, reason TEXT, tuning_rationale TEXT, memory_target TEXT,
             PRIMARY KEY(suite_id, engine_id, model_id, method)
         );
+        CREATE TABLE IF NOT EXISTS suite_preparation_signals (
+            suite_id TEXT PRIMARY KEY REFERENCES suites(id),
+            message TEXT NOT NULL,
+            completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         """)
         columns = {row["name"] for row in db.execute("PRAGMA table_info(suite_engines)")}
         if "installed_path" not in columns:
@@ -247,6 +252,25 @@ def freeze_suite(suite: str, path: Path = DB) -> None:
         db.execute("UPDATE suites SET status='frozen' WHERE id=?", (suite,))
 
 
+def finish_preparation(suite: str, message: str, path: Path = DB) -> None:
+    if not isinstance(message, str) or not message.strip():
+        raise ValueError("A concise preparation summary is required")
+    with database(path) as db:
+        row = db.execute("SELECT status FROM suites WHERE id=?", (suite,)).fetchone()
+        if row is None or row["status"] != "frozen":
+            raise ValueError("Freeze the validated suite before marking preparation complete")
+        db.execute("INSERT INTO suite_preparation_signals(suite_id,message) VALUES (?,?) "
+                   "ON CONFLICT(suite_id) DO UPDATE SET message=excluded.message, "
+                   "completed_at=CURRENT_TIMESTAMP", (suite, message.strip()))
+
+
+def preparation_signal(suite: str, path: Path = DB) -> dict | None:
+    with database(path) as db:
+        row = db.execute("SELECT message, completed_at FROM suite_preparation_signals WHERE suite_id=?",
+                         (suite,)).fetchone()
+    return dict(row) if row else None
+
+
 def show_suite(suite: str, path: Path = DB) -> dict:
     with database(path) as db:
         row = db.execute("SELECT * FROM suites WHERE id=?", (suite,)).fetchone()
@@ -267,6 +291,9 @@ def main() -> int:
     sub = parser.add_subparsers(dest="action", required=True)
     for name in ("show", "validate", "freeze"):
         sub.add_parser(name).add_argument("suite")
+    finish = sub.add_parser("finish-prepare")
+    finish.add_argument("suite")
+    finish.add_argument("--message", required=True)
     engine = sub.add_parser("record-engine")
     engine.add_argument("suite")
     engine.add_argument("engine_id")
@@ -290,6 +317,9 @@ def main() -> int:
         elif args.action == "freeze":
             freeze_suite(args.suite)
             print("Suite frozen")
+        elif args.action == "finish-prepare":
+            finish_preparation(args.suite, args.message)
+            print("Preparation complete")
         elif args.action == "record-engine":
             print(record_engine(args.suite, args.engine_id, args.revision,
                                 installed_path=args.installed_path))

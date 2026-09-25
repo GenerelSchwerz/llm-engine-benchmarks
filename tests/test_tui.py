@@ -113,6 +113,31 @@ class SetupTest(unittest.TestCase):
                 for item in reversed(patches):
                     item.stop()
 
+    def test_suite_banner_announces_preparation_without_codex_exit(self) -> None:
+        patches = [
+            patch.object(tui, "migrate_old_files", lambda: None),
+            patch.object(tui, "show_suite", lambda _id: {"suite": {"status": "frozen"}}),
+            patch.object(tui, "preparation_signal", lambda _id: {"message": "Reviewed plan"}),
+        ]
+        for item in patches:
+            item.start()
+        try:
+            async def exercise():
+                app = tui.BenchmarkApp()
+                async with app.run_test(size=(100, 35)):
+                    app.query_one("#suite-id", Input).value = "demo-suite"
+                    app.terminals["still-open"] = ("suite", "prepare", "demo-suite")
+                    app.poll_suite_progress()
+                    banner = str(app.query_one("#suite-stage-status").content)
+                    self.assertIn("agent reported preparation complete", banner)
+                    self.assertIn("Codex terminal open", banner)
+                    self.assertIn("demo-suite", app.announced_preparations)
+
+            asyncio.run(exercise())
+        finally:
+            for item in reversed(patches):
+                item.stop()
+
     def test_file_removal_requires_exact_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             db = Path(temp) / "catalog.sqlite3"
@@ -549,8 +574,12 @@ class SetupTest(unittest.TestCase):
                     "support": "supported", "command": ["server", "--model", str(artifact)],
                     "tuning_rationale": "Baseline", "memory_target": "8 GiB",
                 }, db)
+            with self.assertRaisesRegex(ValueError, "Freeze"):
+                suite_store.finish_preparation("demo-suite", "Too early", db)
             suite_store.freeze_suite("demo-suite", db)
             self.assertEqual(suite_store.show_suite("demo-suite", db)["suite"]["status"], "frozen")
+            suite_store.finish_preparation("demo-suite", "Reviewed frozen handoff", db)
+            self.assertEqual(suite_store.preparation_signal("demo-suite", db)["message"], "Reviewed frozen handoff")
             with self.assertRaisesRegex(ValueError, "frozen"):
                 suite_store.record_engine("demo-suite", engine, head, db)
             artifact.write_bytes(b"changed")
@@ -561,6 +590,8 @@ class SetupTest(unittest.TestCase):
         prompt = make_prompt("prepare", "demo-suite", ["engine"], ["model"], False)
         self.assertIn("suite_store.py freeze demo-suite", prompt)
         self.assertIn("do not claim the plan is frozen", prompt)
+        self.assertIn("finish-prepare demo-suite", prompt)
+        self.assertNotIn("finish-prepare", make_prompt("run", "demo-suite", ["engine"], ["model"], False))
 
     def test_agent_events_are_readable(self) -> None:
         started = tui.BenchmarkApp.format_agent_event(json.dumps({

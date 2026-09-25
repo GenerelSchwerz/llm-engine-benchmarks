@@ -29,7 +29,7 @@ The minimal terminal UI has four tabs:
 | --- | --- |
 | **Engines** | Ask an agent to find and install a fork in one sentence, or toggle to a manual locator form. |
 | **Models** | Ask an agent to find or install one or several models, or toggle to a manual locator form. |
-| **Suite** | Name the suite, choose whether to check upstream updates, then prepare or run it with Codex. |
+| **Suite** | Name the suite, choose update checks, freeze a reviewed plan, then run it. The status bar reports preparation completion outside Codex. |
 | **Agents** | Use Codex inside a separate terminal pane for each running agent. Monochrome terminals show a readable event log instead. |
 
 Use **Tab** to move between controls and **Space** to toggle a selection. Hover over either picker and type to filter; **Backspace** edits the filter and **Esc** clears it. Hidden selections stay selected. The setup mode button is at the bottom of each tab. In Agent mode, describe what you want and open **Agents**. Color terminals embed the interactive Codex TUI; press **Ctrl+G** to leave its pane. Monochrome terminals and sessions with `NO_COLOR` use a readable background event log. The program validates saved results when Codex exits. A confident result appears as **ready** and waits for **Confirm result**; an ambiguous or blocked request appears as **needs_input**, and the same input becomes **Answer & retry**. You can switch to Manual mode at any time. Select one saved item and choose **Edit selected** to change it.
@@ -62,7 +62,7 @@ uv run scripts/start_codex.py prepare my-suite --engine ENGINE_ID --model MODEL_
 uv run scripts/start_codex.py run my-suite
 ```
 
-`prepare` creates a draft and launches the agent. The agent must pass code validation to freeze it. Update checks are **off by default** to save time and agent usage; `--no-check-updates` states that choice explicitly. Exact versions must still be resolved for new sources. Review the frozen plan before `run`. Repeat `--engine` and `--model` for more selections. Use `--dry-run` to see the prompt. The launcher does not publish results.
+`prepare` creates a draft and launches the agent. The agent must pass code validation to freeze it, then record a completion signal that appears in the TUI even while its Codex terminal stays open. A frozen plan is a preparation handoff; `run` checks binaries and output before measuring. Update checks are **off by default** to save time and agent usage; `--no-check-updates` states that choice explicitly. Exact versions must still be resolved for new sources. Review the frozen plan before `run`. Repeat `--engine` and `--model` for more selections. Use `--dry-run` to see the prompt. The launcher does not publish results.
 
 ## Explore
 

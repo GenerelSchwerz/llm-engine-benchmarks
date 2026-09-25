@@ -26,12 +26,7 @@ def make_prompt(stage: str, suite_id: str, engines: list[str], models: list[str]
         "Read selected setup records with 'uv run scripts/suite_store.py show " + suite_id + "'. "
         "Follow the runbook's fan-out, coalescing, "
         "and single-runner handoff. Use research subagents when available; otherwise "
-        "complete the reviews sequentially and say so. Record engine revisions with "
-        "'uv run scripts/suite_store.py record-engine', model revisions and tokenizer with "
-        "'record-model', and per-pair commands with 'record-packet'. These commands validate "
-        "and write to SQLite; check every exit status. Finish preparation with "
-        "'uv run scripts/suite_store.py freeze " + suite_id + "'. If validation rejects a "
-        "record, fix it and do not claim the plan is frozen. Preserve existing work and "
+        "complete the reviews sequentially and say so. Preserve existing work and "
         "report exact artifacts, unresolved inputs, and next steps. "
     )
     if not engines and stage == "prepare":
@@ -53,6 +48,15 @@ def make_prompt(stage: str, suite_id: str, engines: list[str], models: list[str]
     stages = {
         "prepare": (
             "Prepare a new frozen suite revision. " + update_instruction +
+            "Record engine revisions with 'uv run scripts/suite_store.py record-engine', "
+            "model revisions and tokenizer with 'record-model', and per-pair commands "
+            "with 'record-packet'. These commands validate and write to SQLite; check every "
+            "exit status. Finish preparation with 'uv run scripts/suite_store.py freeze " +
+            suite_id + "'. If validation rejects a record, fix it and do not claim the plan "
+            "is frozen. After freezing and completing the handoff, run "
+            "'uv run scripts/suite_store.py finish-prepare " + suite_id +
+            " --message VERIFIED_SUMMARY' so the outer TUI can announce completion while "
+            "the interactive session remains open. "
             "Check local source pins, identify model details and tokenizer, return packets "
             "per model and method, review code "
             "only where prior validation cannot be reused, coalesce the packets, and record the "
