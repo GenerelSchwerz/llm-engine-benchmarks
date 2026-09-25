@@ -531,7 +531,6 @@ class BenchmarkApp(App[None]):
                     yield Button("Pull findings", id="result-pull", variant="primary")
                     yield Button("Talk to Codex", id="result-talk", variant="success")
                 yield Static("Select a run to review.", id="result-detail")
-                yield Input(id="result-question", placeholder="Optional first question for Codex")
                 yield RichLog(id="result-findings", highlight=True, markup=True, wrap=True)
             with TabPane("Agents", id="agents"):
                 with TabbedContent(id="agent-tabs"):
@@ -704,7 +703,7 @@ class BenchmarkApp(App[None]):
         for item in data["artifacts"]:
             log.write(f"[dim]Source: {escape(item)}[/dim]")
 
-    async def start_results_agent(self, key: str, question: str) -> None:
+    async def start_results_agent(self, key: str) -> None:
         tabs = self.query_one("#agent-tabs", TabbedContent)
         active = next((ident for ident, info in self.terminals.items()
                        if info == ("results", key)), None)
@@ -725,7 +724,7 @@ class BenchmarkApp(App[None]):
             "you to save findings, write JSON with summary, highlights, limitations, and relative "
             "artifact paths, then submit it through `uv run scripts/results_store.py record-findings "
             f"{key} PATH_TO_JSON`; check the exit status. "
-            + (f"Start by answering: {question}" if question else "Start with a concise review of this run.")
+            "Start with a concise review of this run."
         )
         pane_id = f"result-agent-{uuid.uuid4().hex[:12]}"
         if self.embedded_terminal_available():
@@ -1151,7 +1150,7 @@ class BenchmarkApp(App[None]):
                 key = self.highlighted_result()
                 if not key:
                     raise ValueError("Select a run first")
-                self.run_worker(self.start_results_agent(key, self.value("result-question")),
+                self.run_worker(self.start_results_agent(key),
                                 name=f"results-{key.replace('/', '-')}")
             elif action in {"prepare", "run"}:
                 self.launch_agent(action)

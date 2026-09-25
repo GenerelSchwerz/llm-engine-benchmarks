@@ -83,10 +83,11 @@ class ResultsTest(unittest.TestCase):
             app = tui.BenchmarkApp()
             async with app.run_test(size=(110, 40)):
                 app.query_one("#main-tabs", TabbedContent).active = "results"
-                await app.start_results_agent("demo/run-1", "Explain the cache gain")
+                self.assertFalse(app.query("#result-question"))
+                await app.start_results_agent("demo/run-1")
                 self.assertEqual(app.query_one("#main-tabs", TabbedContent).active, "agents")
                 self.assertEqual(len(prompts), 1)
-                self.assertIn("Explain the cache gain", prompts[0])
+                self.assertIn("Start with a concise review", prompts[0])
                 self.assertIn("record-findings demo/run-1", prompts[0])
                 self.assertIn("Do not rerun benchmarks", prompts[0])
         with patch.object(tui, "list_results", return_value=[row]), \
@@ -103,7 +104,7 @@ class ResultsTest(unittest.TestCase):
         async def exercise():
             app = tui.BenchmarkApp()
             async with app.run_test(size=(110, 40)) as pilot:
-                await app.start_results_agent("demo/run-1", "")
+                await app.start_results_agent("demo/run-1")
                 tabs = app.query_one("#agent-tabs", TabbedContent)
                 pane_id = tabs.active
                 self.assertNotEqual(pane_id, "agent-overview")
@@ -135,7 +136,7 @@ class ResultsTest(unittest.TestCase):
         async def exercise():
             app = tui.BenchmarkApp()
             async with app.run_test(size=(110, 40)):
-                await app.start_results_agent("demo/run-1", "")
+                await app.start_results_agent("demo/run-1")
                 tabs = app.query_one("#agent-tabs", TabbedContent)
                 pane_id = tabs.active
                 self.assertEqual(len(app.terminals), 1)
