@@ -12,23 +12,25 @@ import tempfile
 from pathlib import Path
 
 from rich.markup import escape
+from bittty import constants
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import (
     Button, Checkbox, Footer, Header, Input, Label, RichLog, Select,
-    SelectionList, Static, TabbedContent, TabPane, Tabs,
+    OptionList, SelectionList, Static, TabbedContent, TabPane, Tabs,
 )
 from textual_tty import Terminal
 
 from source_manifest import ROOT
 from start_codex import make_prompt
-from suite_store import create_suite, preparation_signal, show_suite, validate_suite
+from suite_store import create_suite, delete_suite, list_suites, preparation_signal, show_suite, validate_suite
 from tui_data import (
     answer_request, completion_signal, confirm_request, create_request, get_request, latest_request,
     list_engines, list_models, load_state, migrate_old_files, remove_engine,
     remove_model, request_removals, request_results, resolve_request, save_engine, save_model, save_state,
+    update_builtin_engine,
 )
 
 TYPES = ("git", "package", "container", "remote", "local")
@@ -51,6 +53,8 @@ class SearchableSelectionList(SelectionList):
     def on_key(self, event) -> None:
         if event.key in {"backspace", "escape"}:
             self.app.change_picker_filter(self.id, event.key)
+            if event.key == "escape":
+                self.app.action_clear_edit()
         elif event.character and event.character.isprintable() and not event.character.isspace():
             self.app.change_picker_filter(self.id, event.character)
         else:
@@ -58,11 +62,57 @@ class SearchableSelectionList(SelectionList):
         event.prevent_default()
         event.stop()
 
+    async def _on_click(self, event) -> None:
+        if event.button == 3:
+            index = event.style.meta.get("option") if event.style else None
+            if index is not None:
+                self.highlighted = index
+                self.app.open_manual_editor(self.id, self.get_option_at_index(index).value)
+            event.stop()
+            event.prevent_default()
+            return
+        await super()._on_click(event)
+
+
+class CodexTerminal(Terminal):
+    """Use Codex's transcript overlay for wheel access to older output."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.transcript_open = False
+
+    def toggle_transcript(self) -> None:
+        self.board.display.input_key("t", constants.KEY_MOD_CTRL)
+        self.transcript_open = not self.transcript_open
+
+    def on_key(self, event) -> None:
+        if event.key == "ctrl+t":
+            self.transcript_open = not self.transcript_open
+        elif self.transcript_open and event.key in {"escape", "q"}:
+            self.transcript_open = False
+        super().on_key(event)
+
+    def on_mouse_scroll_up(self, event) -> None:
+        if not self.transcript_open:
+            self.toggle_transcript()
+        for _ in range(3):
+            self.board.display.input_key("up")
+        event.stop()
+
+    def on_mouse_scroll_down(self, event) -> None:
+        if self.transcript_open:
+            for _ in range(3):
+                self.board.display.input_key("down")
+            event.stop()
+        else:
+            super().on_mouse_scroll_down(event)
+
 
 class BenchmarkApp(App[None]):
     TITLE = "LLM Benchmarks"
     SUB_TITLE = "engines · models · suite"
-    BINDINGS = [("q", "quit", "Quit"), Binding("ctrl+g", "focus_agent_tabs", "Leave agent", priority=True)]
+    BINDINGS = [("q", "quit", "Quit"), ("escape", "clear_edit", "Clear edit"),
+                Binding("ctrl+g", "focus_agent_tabs", "Leave agent", priority=True)]
     CSS = """
     Screen { background: $surface; }
     TabbedContent { height: 1fr; }
@@ -80,6 +130,10 @@ class BenchmarkApp(App[None]):
     #suite-summary { margin: 1 0; }
     .agent-panel { height: 1fr; }
     Terminal { height: 1fr; }
+    CodexTerminal { height: 1fr; }
+    #suite-list { height: 9; border: round $primary; margin-bottom: 1; }
+    #suite-scroll { height: 1fr; }
+    #suite-detail { min-height: 3; color: $text-muted; }
     .request-status { margin: 1 0; }
     .mode-button { dock: bottom; height: 3; margin: 1 0 0 0; }
     #agent-tabs { height: 1fr; }
@@ -93,6 +147,7 @@ class BenchmarkApp(App[None]):
         self.state = load_state()
         self.loading = True
         self.pending_delete: tuple[str, str] | None = None
+        self.pending_suite_delete: str | None = None
         self.edit_engine_id: str | None = None
         self.edit_model_id: str | None = None
         self.mode = {
@@ -117,6 +172,55 @@ class BenchmarkApp(App[None]):
     def action_focus_agent_tabs(self) -> None:
         self.query_one("#agent-tabs Tabs", Tabs).focus()
 
+    def action_clear_edit(self) -> None:
+        for kind in ("engine", "model"):
+            if getattr(self, f"edit_{kind}_id") is not None:
+                self.clear_manual_editor(kind)
+
+    def clear_manual_editor(self, kind: str) -> None:
+        setattr(self, f"edit_{kind}_id", None)
+        if kind == "engine":
+            self.query_one("#engine-type", Select).disabled = False
+            self.query_one("#engine-type", Select).value = "git"
+            for field in ("label", "locator", "notes"):
+                self.query_one(f"#engine-{field}", Input).disabled = False
+            self.fill({f"engine-{field}": "" for field in
+                       ("label", "locator", "ref", "revision", "installed-path", "notes")})
+        else:
+            self.fill({f"model-{field}": "" for field in
+                       ("label", "artifact", "family", "context", "engines", "notes")})
+        self.query_one(f"#{kind}-editor-title", Label).update(f"Add {'an engine' if kind == 'engine' else 'a model'}")
+        button = self.query_one(f"#{kind}-save", Button)
+        button.label = f"Add {kind}"
+        button.disabled = False
+        self.pending_delete = None
+
+    def open_manual_editor(self, picker_id: str | None, ident: str, switch_mode: bool = True) -> None:
+        if picker_id not in {"engine-list", "model-list"}:
+            return
+        kind = picker_id.split("-")[0]
+        items = self.engines if kind == "engine" else self.models
+        item = next((row for row in items if row["id"] == ident), None)
+        if item is None:
+            raise ValueError(f"Unknown {kind} {ident}")
+        if switch_mode:
+            self.mode[kind] = "manual"
+            self.update_modes()
+        setattr(self, f"edit_{kind}_id", ident)
+        (self.load_engine if kind == "engine" else self.load_model)(ident)
+        self.query_one(f"#{kind}-editor-title", Label).update(f"Editing {kind}: {item['label']}")
+        save_button = self.query_one(f"#{kind}-save", Button)
+        save_button.label = f"Update {kind}"
+        if kind == "engine":
+            built_in = item["built_in"]
+            self.query_one("#engine-type", Select).disabled = built_in
+            for field in ("label", "locator", "notes"):
+                self.query_one(f"#engine-{field}", Input).disabled = built_in
+            save_button.disabled = built_in and item["type"] != "git"
+        self.pending_delete = None
+        self.remember()
+        self.message(f"Editing {kind} {ident}; Escape or New clears the editor")
+
     def compose(self) -> ComposeResult:
         yield Header()
         with TabbedContent(initial="engines"):
@@ -132,7 +236,7 @@ class BenchmarkApp(App[None]):
                         yield Button("Confirm result", id="engine-confirm", variant="success")
                     yield Static(id="engine-agent-status", classes="request-status")
                 with VerticalScroll(id="engine-manual", classes="form"):
-                    yield Label("Add an engine", classes="section-title")
+                    yield Label("Add an engine", id="engine-editor-title", classes="section-title")
                     yield Label("Name (optional)", classes="field-label")
                     yield Input(id="engine-label", placeholder="e.g. My fast engine")
                     yield Label("Type", classes="field-label")
@@ -141,12 +245,16 @@ class BenchmarkApp(App[None]):
                     yield Input(id="engine-locator", placeholder="https://example.org/engine.git")
                     yield Label("Branch or reference (optional)", classes="field-label")
                     yield Input(id="engine-ref", placeholder="leave empty to let the agent determine it")
+                    yield Label("Installed revision (optional)", classes="field-label")
+                    yield Input(id="engine-revision", placeholder="exact commit or version")
+                    yield Label("Installed path (optional)", classes="field-label")
+                    yield Input(id="engine-installed-path", placeholder="/path/to/checkout")
                     yield Label("Notes (optional)", classes="field-label")
                     yield Input(id="engine-notes", placeholder="anything the agent should know")
                     with Horizontal(classes="buttons"):
                         yield Button("New", id="engine-new")
                         yield Button("Edit selected", id="engine-edit")
-                        yield Button("Save", id="engine-save", variant="success")
+                        yield Button("Add engine", id="engine-save", variant="success")
                         yield Button("Remove", id="engine-remove", variant="error")
                 yield Button("Switch to manual setup", id="engine-mode", classes="mode-button")
             with TabPane("Models", id="models"):
@@ -162,7 +270,7 @@ class BenchmarkApp(App[None]):
                         yield Button("Confirm result", id="model-confirm", variant="success")
                     yield Static(id="model-agent-status", classes="request-status")
                 with VerticalScroll(id="model-manual", classes="form"):
-                    yield Label("Add a model", classes="section-title")
+                    yield Label("Add a model", id="model-editor-title", classes="section-title")
                     yield Label("Name (optional)", classes="field-label")
                     yield Input(id="model-label", placeholder="e.g. Qwen local GGUF")
                     yield Label("Model path, URL, or service ID", classes="field-label")
@@ -178,19 +286,28 @@ class BenchmarkApp(App[None]):
                     with Horizontal(classes="buttons"):
                         yield Button("New", id="model-new")
                         yield Button("Edit selected", id="model-edit")
-                        yield Button("Save", id="model-save", variant="success")
+                        yield Button("Add model", id="model-save", variant="success")
                         yield Button("Remove", id="model-remove", variant="error")
                 yield Button("Switch to manual setup", id="model-mode", classes="mode-button")
             with TabPane("Suite", id="suite"):
-                yield Label("Prepare a suite, then run its frozen plan", classes="section-title")
-                yield Label("Suite name", classes="field-label")
-                yield Input(id="suite-id", placeholder="e.g. september-sweep")
-                yield Checkbox("Check upstream updates during preparation", id="check-updates")
-                yield Static(id="suite-summary")
-                with Horizontal(classes="buttons"):
-                    yield Button("Prepare with Codex", id="prepare", variant="primary")
-                    yield Button("Run frozen plan", id="run")
-                yield Static("The agent resolves versions, hashes, tokenizer, and per-model commands. Code validates the saved plan.")
+                with VerticalScroll(id="suite-scroll"):
+                    yield Label("Prepare a suite, then run its frozen plan", classes="section-title")
+                    yield Label("Saved suites", classes="field-label")
+                    yield OptionList(id="suite-list")
+                    with Horizontal(classes="buttons"):
+                        yield Button("New", id="suite-new")
+                        yield Button("Open", id="suite-open", variant="primary")
+                        yield Button("Delete", id="suite-delete", variant="error")
+                    yield Static("Select a suite to see its details.", id="suite-detail")
+                    yield Label("Suite name", classes="field-label")
+                    yield Input(id="suite-id", placeholder="e.g. september-sweep")
+                    yield Checkbox("Check upstream updates during preparation", id="check-updates")
+                    yield Static(id="suite-summary")
+                    with Horizontal(classes="buttons"):
+                        yield Button("Save draft", id="suite-create")
+                        yield Button("Prepare with Codex", id="prepare", variant="primary")
+                        yield Button("Run frozen plan", id="run")
+                    yield Static("The agent resolves versions, hashes, tokenizer, and per-model commands. Code validates the saved plan.")
             with TabPane("Agents", id="agents"):
                 with TabbedContent(id="agent-tabs"):
                     with TabPane("Overview", id="agent-overview"):
@@ -202,6 +319,7 @@ class BenchmarkApp(App[None]):
     def on_mount(self) -> None:
         self.refresh_engines()
         self.refresh_models()
+        self.refresh_suites()
         self.query_one("#suite-id", Input).value = self.state.get("suite_id", "")
         self.query_one("#check-updates", Checkbox).value = bool(self.state.get("check_updates", False))
         self.loading = False
@@ -255,6 +373,104 @@ class BenchmarkApp(App[None]):
             f"Upstream updates: {'check' if self.query_one('#check-updates', Checkbox).value else 'skip'}"
         )
 
+    def refresh_suites(self) -> None:
+        picker = self.query_one("#suite-list", OptionList)
+        old = self.highlighted_suite()
+        rows = list_suites()
+        picker.clear_options()
+        for row in rows:
+            marker = "●" if row["prepared"] else "○"
+            picker.add_option(f"{row['id']}  ·  {row['status']} {marker}  ·  {row['engine_count']} engines / {row['model_count']} models")
+        if old:
+            for index, row in enumerate(rows):
+                if row["id"] == old:
+                    picker.highlighted = index
+                    break
+        self.suite_rows = rows
+        self.show_suite_detail()
+
+    def highlighted_suite(self) -> str | None:
+        picker = self.query_one("#suite-list", OptionList)
+        index = picker.highlighted
+        rows = getattr(self, "suite_rows", [])
+        return rows[index]["id"] if index is not None and index < len(rows) else None
+
+    def show_suite_detail(self) -> None:
+        ident = self.highlighted_suite()
+        row = next((x for x in getattr(self, "suite_rows", []) if x["id"] == ident), None)
+        detail = self.query_one("#suite-detail", Static)
+        if row is None:
+            detail.update("No saved suite selected.")
+            return
+        detail.update(f"{escape(ident)} · {row['status']} · {row['engine_count']} engines, "
+                      f"{row['model_count']} models, {row['packet_count']} packets · "
+                      f"updates {'on' if row['check_updates'] else 'off'} · "
+                      f"preparation {'complete' if row['prepared'] else 'pending'}")
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        if event.option_list.id == "suite-list":
+            self.pending_suite_delete = None
+            self.show_suite_detail()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_list.id == "suite-list":
+            self.open_suite()
+
+    def open_suite(self) -> None:
+        ident = self.highlighted_suite()
+        if ident is None:
+            raise ValueError("Select a saved suite to open")
+        data = show_suite(ident)
+        for kind, key in (("engine", "engines"), ("model", "models")):
+            ids = {x[f"{kind}_id"] for x in data[key]}
+            known = {x["id"] for x in (self.engines if kind == "engine" else self.models)}
+            if ids - known:
+                raise ValueError(f"Suite {ident} references missing {kind} entries: {', '.join(sorted(ids - known))}")
+            self.selection_cache[kind] = ids
+            picker = self.query_one(f"#{kind}-list", SelectionList)
+            picker.deselect_all()
+            for item in ids:
+                if any(option.value == item for option in picker.options):
+                    picker.select(item)
+        self.query_one("#suite-id", Input).value = ident
+        self.query_one("#check-updates", Checkbox).value = bool(data["suite"]["check_updates"])
+        self.remember()
+        self.poll_suite_progress()
+        self.message(f"Opened suite {ident}")
+
+    def new_suite(self) -> None:
+        self.query_one("#suite-id", Input).value = ""
+        self.pending_suite_delete = None
+        self.remember()
+        self.poll_suite_progress()
+        self.query_one("#suite-id", Input).focus()
+
+    def save_suite_draft(self) -> None:
+        ident = self.value("suite-id")
+        create_suite(ident, self.selected("#engine-list"), self.selected("#model-list"),
+                     self.query_one("#check-updates", Checkbox).value)
+        self.remember()
+        self.refresh_suites()
+        self.poll_suite_progress()
+        self.message(f"Saved draft suite {ident}")
+
+    def remove_suite(self) -> None:
+        ident = self.highlighted_suite()
+        if ident is None:
+            raise ValueError("Select a saved suite to delete")
+        if any(info[0] == "suite" and info[2] == ident for info in self.terminals.values()):
+            raise ValueError("Close the active suite agent before deleting this suite")
+        if self.pending_suite_delete != ident:
+            self.pending_suite_delete = ident
+            self.message(f"Press Delete again to remove suite {ident} and its saved plan")
+            return
+        delete_suite(ident)
+        self.pending_suite_delete = None
+        if self.value("suite-id") == ident:
+            self.new_suite()
+        self.refresh_suites()
+        self.message(f"Deleted suite {ident}; source files and benchmark artifacts remain")
+
     def refresh_engines(self, editor_id: str | None = None) -> None:
         previous = set(self.selected("#engine-list"))
         self.engines = list_engines()
@@ -266,8 +482,7 @@ class BenchmarkApp(App[None]):
             if query in f"{x['label']} {x['id']} {x['type']} {x['locator']}".casefold()
         ])
         if editor_id:
-            self.edit_engine_id = editor_id
-            self.load_engine(editor_id)
+            self.open_manual_editor("engine-list", editor_id, switch_mode=False)
         self.update_summary()
 
     def refresh_models(self, editor_id: str | None = None) -> None:
@@ -284,8 +499,7 @@ class BenchmarkApp(App[None]):
         picker.display = bool(self.models)
         self.query_one("#model-empty", Static).display = not self.models
         if editor_id:
-            self.edit_model_id = editor_id
-            self.load_model(editor_id)
+            self.open_manual_editor("model-list", editor_id, switch_mode=False)
         self.update_summary()
 
     def value(self, ident: str) -> str:
@@ -300,7 +514,10 @@ class BenchmarkApp(App[None]):
         if item:
             self.query_one("#engine-type", Select).value = item["type"]
             self.fill({"engine-label": item["label"], "engine-locator": item["locator"],
-                       "engine-ref": item["ref_hint"], "engine-notes": item["notes"]})
+                       "engine-ref": item["ref_hint"], "engine-revision": item["revision"],
+                       "engine-installed-path": item["installed_path"] or
+                       (str(ROOT / "sources" / ident) if item["built_in"] and item["type"] == "git" else ""),
+                       "engine-notes": item["notes"]})
 
     def load_model(self, ident: str) -> None:
         item = next((x for x in self.models if x["id"] == ident), None)
@@ -375,6 +592,8 @@ class BenchmarkApp(App[None]):
             self.message(f"{kind.title()} request {request['id']}: {get_request(request['id'])['status']}")
         self.refresh_request("engine")
         self.refresh_request("model")
+        if list_suites() != getattr(self, "suite_rows", []):
+            self.refresh_suites()
         self.poll_suite_progress()
 
     def poll_suite_progress(self) -> None:
@@ -412,23 +631,16 @@ class BenchmarkApp(App[None]):
         action = event.button.id
         try:
             if action == "engine-new":
-                self.pending_delete = None
-                self.edit_engine_id = None
-                self.query_one("#engine-type", Select).value = "git"
-                self.fill({f"engine-{x}": "" for x in ("label", "locator", "ref", "notes")})
+                self.clear_manual_editor("engine")
             elif action == "model-new":
-                self.pending_delete = None
-                self.edit_model_id = None
-                self.fill({f"model-{x}": "" for x in ("label", "artifact", "family", "context", "engines", "notes")})
+                self.clear_manual_editor("model")
             elif action in {"engine-edit", "model-edit"}:
                 self.pending_delete = None
                 kind = action.split("-")[0]
                 selected = self.selected(f"#{kind}-list")
                 if len(selected) != 1:
                     raise ValueError("Select exactly one item to edit")
-                setattr(self, f"edit_{kind}_id", selected[0])
-                (self.load_engine if kind == "engine" else self.load_model)(selected[0])
-                self.message(f"Editing {kind} {selected[0]}")
+                self.open_manual_editor(f"{kind}-list", selected[0])
             elif action == "engine-save":
                 self.save_engine()
             elif action == "model-save":
@@ -445,17 +657,39 @@ class BenchmarkApp(App[None]):
                 self.handle_request(kind, request_action)
             elif action in {"prepare", "run"}:
                 self.launch_agent(action)
+            elif action == "suite-new":
+                self.new_suite()
+            elif action == "suite-open":
+                self.open_suite()
+            elif action == "suite-delete":
+                self.remove_suite()
+            elif action == "suite-create":
+                self.save_suite_draft()
+            elif action and action.startswith("transcript-"):
+                terminal = self.query_one(f"#{action.removeprefix('transcript-')}", CodexTerminal)
+                terminal.toggle_transcript()
+                terminal.focus()
         except (ValueError, OSError, subprocess.SubprocessError) as exc:
             self.message(f"[red]{exc}[/red]")
             self.notify(str(exc), severity="error")
 
     def save_engine(self) -> None:
+        old = next((x for x in self.engines if x["id"] == self.edit_engine_id), None)
+        if old and old["built_in"]:
+            ident = update_builtin_engine(
+                old["id"], self.value("engine-revision"), self.value("engine-installed-path"),
+                self.value("engine-ref"),
+            )
+            self.refresh_engines(ident)
+            self.message(f"Updated built-in engine {ident}")
+            return
         kind = self.query_one("#engine-type", Select).value
         ident = save_engine({
             "id": self.edit_engine_id,
             "label": self.value("engine-label"), "type": kind,
             "locator": self.value("engine-locator"), "ref_hint": self.value("engine-ref"),
-            "notes": self.value("engine-notes"),
+            "notes": self.value("engine-notes"), "revision": self.value("engine-revision"),
+            "installed_path": self.value("engine-installed-path"),
         })
         self.refresh_engines(ident)
         self.message(f"Saved engine {ident}")
@@ -565,7 +799,8 @@ class BenchmarkApp(App[None]):
             self.terminals[terminal_id] = ("setup", kind, ident)
             await tabs.add_pane(TabPane(
                 f"{kind}: {ident[-8:]}",
-                Terminal(command=["codex", "--no-daemon", "-C", str(ROOT), prompt], id=terminal_id),
+                Button("Transcript / scroll history (Ctrl+T)", id=f"transcript-{terminal_id}"),
+                CodexTerminal(command=["codex", "--no-daemon", "-C", str(ROOT), prompt], id=terminal_id),
                 id=pane_id,
             ))
             tabs.active = pane_id
@@ -713,13 +948,15 @@ class BenchmarkApp(App[None]):
             except (ValueError, OSError) as exc:
                 self.message(f"{stage} failed: {exc}")
                 return
+            self.refresh_suites()
             terminal_id = f"suite-terminal-{len(self.terminals)}"
             self.terminals[terminal_id] = ("suite", stage, suite_id)
             if self.query(f"#{pane_id}"):
                 await tabs.remove_pane(pane_id)
             await tabs.add_pane(TabPane(
                 f"{stage}: {suite_id}",
-                Terminal(command=["codex", "--no-daemon", "-C", str(ROOT), prompt], id=terminal_id),
+                Button("Transcript / scroll history (Ctrl+T)", id=f"transcript-{terminal_id}"),
+                CodexTerminal(command=["codex", "--no-daemon", "-C", str(ROOT), prompt], id=terminal_id),
                 id=pane_id,
             ))
             tabs.active = pane_id

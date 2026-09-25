@@ -10,11 +10,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from rich.console import ColorSystem
 from textual.filter import Monochrome
-from textual.widgets import Checkbox, Input, SelectionList, TabbedContent
+from textual.widgets import Checkbox, Input, OptionList, SelectionList, TabbedContent
 from textual_tty import Terminal
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -212,7 +213,7 @@ class SetupTest(unittest.TestCase):
                 patch.object(tui, "resolve_request", lambda ident, status, message, result_ids=None:
                              tui_data.resolve_request(ident, status, message, result_ids, db)),
                 patch.object(tui.BenchmarkApp, "embedded_terminal_available", lambda _self: True),
-                patch.object(tui, "Terminal", lambda command, id: real_terminal(
+                patch.object(tui, "CodexTerminal", lambda command, id: real_terminal(
                     command=["sh", "-c", "printf 'interactive\\n'"], id=id)),
             ]
             for item in patches:
@@ -245,7 +246,7 @@ class SetupTest(unittest.TestCase):
             patch.object(tui, "create_suite", lambda *args: created.append(args)),
             patch.object(tui, "show_suite", lambda _id: {"suite": {"status": "frozen"}}),
             patch.object(tui.BenchmarkApp, "embedded_terminal_available", lambda _self: True),
-            patch.object(tui, "Terminal", lambda command, id: real_terminal(
+            patch.object(tui, "CodexTerminal", lambda command, id: real_terminal(
                 command=["sh", "-c", "printf 'suite\\n'"], id=id)),
         ]
         for item in patches:
@@ -376,6 +377,133 @@ class SetupTest(unittest.TestCase):
             finally:
                 for item in reversed(patches):
                     item.stop()
+
+    def test_right_click_edits_row_and_escape_restores_add_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            db = Path(temp) / "catalog.sqlite3"
+            first = tui_data.save_model({"artifact": "/tmp/alpha.gguf", "label": "Alpha"}, db)
+            second = tui_data.save_model({"artifact": "/tmp/beta.gguf", "label": "Beta"}, db)
+            patches = [
+                patch.object(tui, "migrate_old_files", lambda: None),
+                patch.object(tui, "list_engines", lambda: tui_data.list_engines(db)),
+                patch.object(tui, "list_models", lambda: tui_data.list_models(db)),
+                patch.object(tui, "save_model", lambda item: tui_data.save_model(item, db)),
+                patch.object(tui, "load_state", lambda: tui_data.load_state(db)),
+                patch.object(tui, "save_state", lambda state: tui_data.save_state(state, db)),
+                patch.object(tui, "latest_request", lambda kind: tui_data.latest_request(kind, db)),
+            ]
+            for item in patches:
+                item.start()
+            try:
+                async def exercise():
+                    app = tui.BenchmarkApp()
+                    async with app.run_test(size=(100, 40)) as pilot:
+                        app.query(TabbedContent).first().active = "models"
+                        await pilot.pause()
+                        await pilot.click("#model-list", offset=(5, 2), button=3)
+                        self.assertEqual(app.edit_model_id, second)
+                        self.assertEqual(app.mode["model"], "manual")
+                        self.assertEqual(app.query_one("#model-label", Input).value, "Beta")
+                        self.assertNotIn(second, app.selected("#model-list"))
+                        self.assertEqual(str(app.query_one("#model-save").label), "Update model")
+                        app.query_one("#model-label", Input).value = "Beta updated"
+                        app.save_model()
+                        self.assertEqual(len(tui_data.list_models(db)), 2)
+                        self.assertEqual(next(x for x in tui_data.list_models(db) if x["id"] == second)["label"], "Beta updated")
+                        app.query_one("#model-label", Input).focus()
+                        await pilot.press("escape")
+                        self.assertIsNone(app.edit_model_id)
+                        self.assertEqual(str(app.query_one("#model-save").label), "Add model")
+                        app.query_one("#model-label", Input).value = "Gamma"
+                        app.query_one("#model-artifact", Input).value = "/tmp/gamma.gguf"
+                        app.save_model()
+                        self.assertEqual(len(tui_data.list_models(db)), 3)
+                        self.assertTrue(any(x["id"] == first for x in tui_data.list_models(db)))
+
+
+                    app = tui.BenchmarkApp()
+                    async with app.run_test(size=(100, 40)) as pilot:
+                        await pilot.click("#engine-list", offset=(5, 2), button=3)
+                        self.assertEqual(app.edit_engine_id, "leloch-v1")
+                        self.assertEqual(app.mode["engine"], "manual")
+                        self.assertEqual(app.query_one("#engine-revision", Input).value,
+                                         next(x for x in app.engines if x["id"] == "leloch-v1")["revision"])
+                        self.assertNotIn("leloch-v1", app.selected("#engine-list"))
+                        app.action_clear_edit()
+                        self.assertIsNone(app.edit_engine_id)
+
+                asyncio.run(exercise())
+            finally:
+                for item in reversed(patches):
+                    item.stop()
+
+    def test_suite_create_open_and_delete_in_tui(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            db = Path(temp) / "catalog.sqlite3"
+            engine = tui_data.save_engine({"label": "Demo", "type": "git",
+                                           "locator": "https://example.org/demo.git"}, db)
+            model = tui_data.save_model({"artifact": "/tmp/demo.gguf", "label": "Demo"}, db)
+            patches = [
+                patch.object(tui, "migrate_old_files", lambda: None),
+                patch.object(tui, "list_engines", lambda: tui_data.list_engines(db)),
+                patch.object(tui, "list_models", lambda: tui_data.list_models(db)),
+                patch.object(tui, "load_state", lambda: tui_data.load_state(db)),
+                patch.object(tui, "save_state", lambda state: tui_data.save_state(state, db)),
+                patch.object(tui, "latest_request", lambda kind: tui_data.latest_request(kind, db)),
+                patch.object(tui, "list_suites", lambda: suite_store.list_suites(db)),
+                patch.object(tui, "show_suite", lambda ident: suite_store.show_suite(ident, db)),
+                patch.object(tui, "create_suite", lambda ident, engines, models, updates:
+                             suite_store.create_suite(ident, engines, models, updates, db)),
+                patch.object(tui, "delete_suite", lambda ident: suite_store.delete_suite(ident, db)),
+            ]
+            for item in patches:
+                item.start()
+            try:
+                async def exercise():
+                    app = tui.BenchmarkApp()
+                    async with app.run_test(size=(100, 40)) as pilot:
+                        app.query_one("#engine-list", SelectionList).select(engine)
+                        app.query_one("#model-list", SelectionList).select(model)
+                        app.query_one("#suite-id", Input).value = "demo-suite"
+                        app.save_suite_draft()
+                        self.assertEqual([x["id"] for x in suite_store.list_suites(db)], ["demo-suite"])
+                        picker = app.query_one("#suite-list", OptionList)
+                        picker.highlighted = 0
+                        app.new_suite()
+                        app.query_one("#engine-list", SelectionList).deselect_all()
+                        app.query_one("#model-list", SelectionList).deselect_all()
+                        app.open_suite()
+                        self.assertEqual(app.value("suite-id"), "demo-suite")
+                        self.assertEqual(app.selected("#engine-list"), [engine])
+                        self.assertEqual(app.selected("#model-list"), [model])
+                        app.remove_suite()
+                        self.assertEqual(len(suite_store.list_suites(db)), 1)
+                        app.remove_suite()
+                        self.assertEqual(suite_store.list_suites(db), [])
+                        self.assertEqual(app.value("suite-id"), "")
+                        await pilot.pause()
+
+                asyncio.run(exercise())
+            finally:
+                for item in reversed(patches):
+                    item.stop()
+
+    def test_codex_terminal_wheel_opens_and_scrolls_transcript(self) -> None:
+        terminal = tui.CodexTerminal(command=["true"])
+        terminal.mouse_mode = "normal"
+        event = SimpleNamespace(stop=Mock())
+        with patch.object(terminal.board.display, "input_key") as keys:
+            terminal.on_mouse_scroll_up(event)
+            terminal.on_mouse_scroll_up(event)
+            terminal.on_mouse_scroll_down(event)
+            self.assertEqual(keys.call_args_list, [
+                unittest.mock.call("t", tui.constants.KEY_MOD_CTRL),
+                *[unittest.mock.call("up")] * 6,
+                *[unittest.mock.call("down")] * 3,
+            ])
+            self.assertEqual(event.stop.call_count, 3)
+            self.assertTrue(terminal.transcript_open)
+
 
     def test_agent_request_questions_and_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

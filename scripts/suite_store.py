@@ -286,10 +286,32 @@ def show_suite(suite: str, path: Path = DB) -> dict:
         }
 
 
+def list_suites(path: Path = DB) -> list[dict]:
+    with database(path) as db:
+        return [dict(row) for row in db.execute("""
+            SELECT s.id, s.status, s.check_updates,
+                   (SELECT COUNT(*) FROM suite_engines e WHERE e.suite_id=s.id) AS engine_count,
+                   (SELECT COUNT(*) FROM suite_models m WHERE m.suite_id=s.id) AS model_count,
+                   (SELECT COUNT(*) FROM packets p WHERE p.suite_id=s.id) AS packet_count,
+                   EXISTS(SELECT 1 FROM suite_preparation_signals x WHERE x.suite_id=s.id) AS prepared
+            FROM suites s ORDER BY s.id COLLATE NOCASE
+        """)]
+
+
+def delete_suite(suite: str, path: Path = DB) -> None:
+    with database(path) as db:
+        if not db.execute("SELECT 1 FROM suites WHERE id=?", (suite,)).fetchone():
+            raise ValueError(f"Unknown suite {suite}")
+        for table in ("suite_preparation_signals", "packets", "suite_models", "suite_engines"):
+            db.execute(f"DELETE FROM {table} WHERE suite_id=?", (suite,))
+        db.execute("DELETE FROM suites WHERE id=?", (suite,))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
-    for name in ("show", "validate", "freeze"):
+    sub.add_parser("list")
+    for name in ("show", "validate", "freeze", "delete"):
         sub.add_parser(name).add_argument("suite")
     finish = sub.add_parser("finish-prepare")
     finish.add_argument("suite")
@@ -309,8 +331,13 @@ def main() -> int:
     packet.add_argument("json_file", type=Path)
     args = parser.parse_args()
     try:
-        if args.action == "show":
+        if args.action == "list":
+            print(json.dumps(list_suites(), indent=2))
+        elif args.action == "show":
             print(json.dumps(show_suite(args.suite), indent=2))
+        elif args.action == "delete":
+            delete_suite(args.suite)
+            print("Suite deleted")
         elif args.action == "validate":
             validate_suite(args.suite)
             print("Suite valid")
