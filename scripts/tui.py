@@ -157,7 +157,8 @@ class BenchmarkApp(App[None]):
     TITLE = "LLM Benchmarks"
     SUB_TITLE = "engines · models · suite"
     BINDINGS = [("q", "quit", "Quit"), ("escape", "clear_edit", "Clear edit"),
-                Binding("ctrl+g", "focus_agent_tabs", "Leave agent", priority=True)]
+                Binding("ctrl+g", "focus_agent_tabs", "Leave agent", priority=True),
+                Binding("f4", "close_agent", "Close agent", priority=True)]
     CSS = """
     Screen { background: $surface; }
     TabbedContent { height: 1fr; }
@@ -294,6 +295,13 @@ class BenchmarkApp(App[None]):
 
     def action_focus_agent_tabs(self) -> None:
         self.query_one("#agent-tabs Tabs", Tabs).focus()
+
+    def action_close_agent(self) -> None:
+        if self.query_one("#main-tabs", TabbedContent).active != "agents":
+            return
+        if self.query_one("#agent-tabs", TabbedContent).active == "agent-overview":
+            return
+        self.run_worker(self.close_selected_agent(), name="close-agent")
 
     def track_background_process(self, log_id: str, process: subprocess.Popen) -> None:
         self.background_processes[log_id] = process
@@ -523,7 +531,6 @@ class BenchmarkApp(App[None]):
                 yield Input(id="result-question", placeholder="Optional first question for Codex")
                 yield RichLog(id="result-findings", highlight=True, markup=True, wrap=True)
             with TabPane("Agents", id="agents"):
-                yield Button("Close selected agent", id="agent-close", variant="warning")
                 with TabbedContent(id="agent-tabs"):
                     with TabPane("Overview", id="agent-overview"):
                         yield Static("Agent output appears here while setup requests run.")
@@ -1125,8 +1132,6 @@ class BenchmarkApp(App[None]):
                 self.message(f"Cleared {count} completed {kind} setup notice(s)")
             elif action == "engine-build":
                 self.launch_builds()
-            elif action == "agent-close":
-                self.run_worker(self.close_selected_agent(), name="close-agent")
             elif action == "result-refresh":
                 self.refresh_results()
             elif action == "result-pull":

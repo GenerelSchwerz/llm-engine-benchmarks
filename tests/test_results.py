@@ -102,11 +102,12 @@ class ResultsTest(unittest.TestCase):
                   "summary_file": "qualified.json", "summary": {}, "findings_saved": False}
         async def exercise():
             app = tui.BenchmarkApp()
-            async with app.run_test(size=(110, 40)):
+            async with app.run_test(size=(110, 40)) as pilot:
                 await app.start_results_agent("demo/run-1", "")
                 tabs = app.query_one("#agent-tabs", TabbedContent)
                 pane_id = tabs.active
                 self.assertNotEqual(pane_id, "agent-overview")
+                self.assertFalse(app.query("#agent-close"))
                 log_id = next(iter(tabs.query_one(f"#{pane_id}").query(RichLog))).id
                 class Process:
                     stopped = False
@@ -116,7 +117,8 @@ class ResultsTest(unittest.TestCase):
                         self.stopped = True
                 process = Process()
                 app.background_processes[log_id] = process
-                await app.close_selected_agent()
+                await pilot.press("f4")
+                await pilot.pause()
                 self.assertTrue(process.stopped)
                 self.assertFalse(app.query(f"#{pane_id}"))
                 self.assertEqual(tabs.active, "agent-overview")
