@@ -15,7 +15,7 @@ uv sync
 uv run llama-benchy --version
 ```
 
-`uv sync` installs the TUI and benchmark client from `uv.lock`. It does not install any LLM engine, model weights, or the optional Codex CLI.
+`uv sync` installs the TUI and benchmark client from `uv.lock`. It does not install any LLM engine, model weights, or the optional Codex CLI. Install `tmux` if you want mouse-wheel scrollback in embedded Codex windows; the TUI works without it.
 
 ## Set up a suite
 
@@ -32,7 +32,7 @@ The minimal terminal UI has four tabs:
 | **Suite** | Save a draft, open an existing suite, or delete its catalog plan. Prepare a reviewed plan, then run it. |
 | **Agents** | Use Codex inside a separate terminal pane for each running agent. Monochrome terminals show a readable event log instead. |
 
-Use **Tab** to move between controls and **Space** to toggle a selection. Hover over either picker and type to filter; **Backspace** edits the filter and **Esc** clears it. Hidden selections stay selected. Right-click a saved engine or model to edit it; **Esc** returns the form to Add mode. The setup mode button is at the bottom of each tab. In Agent mode, describe what you want and open **Agents**. Color terminals embed the interactive Codex TUI; press **Ctrl+G** to leave its pane. Scroll up over Codex to open its transcript, then scroll through earlier output, or use the **Transcript** button. Monochrome terminals and sessions with `NO_COLOR` use a readable background event log. The program validates saved results when Codex exits. A confident result appears as **ready** and waits for **Confirm result**; an ambiguous or blocked request appears as **needs_input**, and the same input becomes **Answer & retry**. You can switch to Manual mode at any time.
+Use **Tab** to move between controls and **Space** to toggle a selection. Hover over either picker and type to filter; **Backspace** edits the filter and **Esc** clears it. Hidden selections stay selected. Right-click a saved engine or model to edit it; **Esc** returns the form to Add mode. The setup mode button is at the bottom of each tab. In Agent mode, describe what you want and open **Agents**. Color terminals embed the interactive Codex TUI; press **Ctrl+G** to leave its pane. With tmux installed, the mouse wheel scrolls the private session's history; press **q** to return to Codex. Without tmux, use the **Transcript** button. Monochrome terminals and sessions with `NO_COLOR` use a readable background event log. The program validates saved results when Codex exits. A confident result appears as **ready** and waits for **Confirm result**; an ambiguous request appears as **needs_input** and waits for **Answer & retry**. Closing Codex before it completes marks the setup **canceled** or **failed**, and **Retry agent** starts a fresh request. You can switch to Manual mode at any time.
 
 The Suite tab lists names, status, counts, and preparation state. **New** clears the name field; **Save draft** creates its SQLite record from the current selections. **Open** restores a saved plan and its selections. **Delete** requires a second click and removes only the suite record and plan; engine installs, model files, and benchmark artifacts stay in place. Frozen plans cannot be edited; create another suite to change one.
 

@@ -42,7 +42,7 @@ def connect(path: Path = DB) -> Iterator[sqlite3.Connection]:
         CREATE TABLE IF NOT EXISTS requests (
             id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('engine','model')),
             prompt TEXT NOT NULL, status TEXT NOT NULL
-                CHECK(status IN ('pending','needs_input','ready','confirmed')),
+                CHECK(status IN ('pending','needs_input','ready','confirmed','canceled','failed')),
             message TEXT NOT NULL DEFAULT '', result_ids TEXT NOT NULL DEFAULT '[]',
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
@@ -71,6 +71,20 @@ def connect(path: Path = DB) -> Iterator[sqlite3.Connection]:
     removal_columns = {row["name"] for row in db.execute("PRAGMA table_info(request_removals)")}
     if "catalog_removed" not in removal_columns:
         db.execute("ALTER TABLE request_removals ADD COLUMN catalog_removed INTEGER NOT NULL DEFAULT 1")
+    request_schema = db.execute("SELECT sql FROM sqlite_master WHERE name='requests'").fetchone()["sql"]
+    if "'canceled'" not in request_schema:
+        db.execute("""
+            CREATE TABLE requests_new (
+                id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('engine','model')),
+                prompt TEXT NOT NULL, status TEXT NOT NULL
+                    CHECK(status IN ('pending','needs_input','ready','confirmed','canceled','failed')),
+                message TEXT NOT NULL DEFAULT '', result_ids TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        db.execute("INSERT INTO requests_new SELECT * FROM requests")
+        db.execute("DROP TABLE requests")
+        db.execute("ALTER TABLE requests_new RENAME TO requests")
     try:
         yield db
         db.commit()
@@ -367,8 +381,8 @@ def resolve_request(ident: str, status: str, message: str,
     request = get_request(ident, path)
     if request["status"] == "confirmed":
         raise ValueError("Confirmed request cannot be changed")
-    if status not in {"ready", "needs_input"} or not isinstance(message, str) or not message.strip():
-        raise ValueError("Resolution needs ready or needs_input and a clear message")
+    if status not in {"ready", "needs_input", "canceled", "failed"} or not isinstance(message, str) or not message.strip():
+        raise ValueError("Resolution needs ready, needs_input, canceled, or failed and a clear message")
     if result_ids is not None and (not isinstance(result_ids, list) or any(not isinstance(x, str) for x in result_ids)):
         raise ValueError("Result IDs must be a list of strings")
     ids = result_ids or []
@@ -410,7 +424,7 @@ def resolve_request(ident: str, status: str, message: str,
                     elif item["type"] in {"package", "container", "remote"} and not item["revision"]:
                         raise ValueError("Result needs an exact package, image, or service version")
     elif ids:
-        raise ValueError("Questions cannot include completed result IDs")
+        raise ValueError("Only ready requests can include completed result IDs")
     with connect(path) as db:
         db.execute("UPDATE requests SET status=?, message=?, result_ids=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
                    (status, message.strip(), json.dumps(ids), ident))

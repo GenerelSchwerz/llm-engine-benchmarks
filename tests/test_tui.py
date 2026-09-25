@@ -5,15 +5,21 @@ import contextlib
 import io
 import json
 import os
+import shlex
+import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from rich.console import ColorSystem
+from textual.app import App, ComposeResult
 from textual.filter import Monochrome
 from textual.widgets import Checkbox, Input, OptionList, SelectionList, TabbedContent
 from textual_tty import Terminal
@@ -110,6 +116,15 @@ class SetupTest(unittest.TestCase):
                         self.assertFalse(app.active_requests)
 
                 asyncio.run(exercise())
+                closing = tui_data.create_request("model", "Find another model", db)
+
+                async def close_app():
+                    app = tui.BenchmarkApp()
+                    async with app.run_test(size=(100, 35)):
+                        app.terminals["closing"] = ("setup", "model", closing)
+
+                asyncio.run(close_app())
+                self.assertEqual(tui_data.get_request(closing, db)["status"], "canceled")
             finally:
                 for item in reversed(patches):
                     item.stop()
@@ -197,6 +212,7 @@ class SetupTest(unittest.TestCase):
             request = tui_data.create_request("model", "Find model", db)
             model = tui_data.save_model({"artifact": str(artifact), "label": "Local"}, db)
             tui_data.attach_request_result(request, model, db)
+            tui_data.signal_request_complete(request, "Verified local model", db)
             with self.assertRaisesRegex(ValueError, "requested kind"):
                 tui_data.attach_request_result(request, "upstream", db)
 
@@ -210,9 +226,11 @@ class SetupTest(unittest.TestCase):
                 patch.object(tui, "latest_request", lambda kind: tui_data.latest_request(kind, db)),
                 patch.object(tui, "get_request", lambda ident: tui_data.get_request(ident, db)),
                 patch.object(tui, "request_results", lambda ident: tui_data.request_results(ident, db)),
+                patch.object(tui, "completion_signal", lambda ident: tui_data.completion_signal(ident, db)),
                 patch.object(tui, "resolve_request", lambda ident, status, message, result_ids=None:
                              tui_data.resolve_request(ident, status, message, result_ids, db)),
                 patch.object(tui.BenchmarkApp, "embedded_terminal_available", lambda _self: True),
+                patch.object(tui, "embedded_codex_command", lambda prompt: (["codex"], None)),
                 patch.object(tui, "CodexTerminal", lambda command, id: real_terminal(
                     command=["sh", "-c", "printf 'interactive\\n'"], id=id)),
             ]
@@ -238,6 +256,169 @@ class SetupTest(unittest.TestCase):
                 for item in reversed(patches):
                     item.stop()
 
+    def test_closed_setup_terminal_is_canceled_and_retryable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            db = Path(temp) / "catalog.sqlite3"
+            request = tui_data.create_request("model", "Find local model", db)
+            patches = [
+                patch.object(tui, "migrate_old_files", lambda: None),
+                patch.object(tui, "list_engines", lambda: tui_data.list_engines(db)),
+                patch.object(tui, "list_models", lambda: tui_data.list_models(db)),
+                patch.object(tui, "load_state", lambda: tui_data.load_state(db)),
+                patch.object(tui, "save_state", lambda state: tui_data.save_state(state, db)),
+                patch.object(tui, "latest_request", lambda kind: tui_data.latest_request(kind, db)),
+                patch.object(tui, "get_request", lambda ident: tui_data.get_request(ident, db)),
+                patch.object(tui, "request_results", lambda ident: tui_data.request_results(ident, db)),
+                patch.object(tui, "request_removals", lambda ident: tui_data.request_removals(ident, db)),
+                patch.object(tui, "completion_signal", lambda ident: tui_data.completion_signal(ident, db)),
+                patch.object(tui, "resolve_request", lambda ident, status, message, result_ids=None:
+                             tui_data.resolve_request(ident, status, message, result_ids, db)),
+                patch.object(tui, "create_request", lambda kind, prompt: tui_data.create_request(kind, prompt, db)),
+                patch.object(tui.BenchmarkApp, "embedded_terminal_available", lambda _self: True),
+                patch.object(tui, "embedded_codex_command", lambda prompt: (["codex"], None)),
+                patch.object(tui, "CodexTerminal", lambda command, id: Terminal(
+                    command=["sh", "-c", "exit 0"], id=id)),
+            ]
+            for item in patches:
+                item.start()
+            try:
+                async def exercise():
+                    app = tui.BenchmarkApp()
+                    app._filters = [item for item in app._filters if not isinstance(item, Monochrome)]
+                    async with app.run_test(size=(100, 35)) as pilot:
+                        app.active_requests.add(request)
+                        await app.start_agent_tab("model", request, "Test")
+                        for _ in range(50):
+                            await asyncio.sleep(0.01)
+                            await pilot.pause()
+                            if tui_data.get_request(request, db)["status"] == "canceled":
+                                break
+                        self.assertEqual(tui_data.get_request(request, db)["status"], "canceled")
+                        self.assertEqual(str(app.query_one("#model-ask").label), "Retry agent")
+                        self.assertFalse(app.active_requests)
+                        app.query_one("#model-request", Input).value = ""
+                        with patch.object(app, "run_worker", side_effect=lambda coroutine, **_kwargs: coroutine.close()):
+                            app.handle_request("model", "ask")
+                        retried = tui_data.latest_request("model", db)
+                        self.assertNotEqual(retried["id"], request)
+                        self.assertEqual(retried["prompt"], "Find local model")
+                        app.terminals["failed-agent"] = ("setup", "model", retried["id"])
+                        app.finish_embedded_terminal("failed-agent", 9)
+                        self.assertEqual(tui_data.get_request(retried["id"], db)["status"], "failed")
+                        vanished = tui_data.create_request("model", "Find third model", db)
+                        app.terminals["vanished"] = ("setup", "model", vanished)
+                        app.tmux_sockets["vanished"] = ("/usr/bin/tmux", "llmbench-test-vanished")
+                        with patch.object(tui.subprocess, "run", return_value=SimpleNamespace(returncode=1)):
+                            app.poll_tmux_sessions()
+                            self.assertEqual(tui_data.get_request(vanished, db)["status"], "pending")
+                            app.poll_tmux_sessions()
+                        self.assertEqual(tui_data.get_request(vanished, db)["status"], "failed")
+                        self.assertNotIn("vanished", app.tmux_sockets)
+
+                asyncio.run(exercise())
+            finally:
+                for item in reversed(patches):
+                    item.stop()
+
+    def test_old_request_schema_migrates_for_canceled_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            db = Path(temp) / "catalog.sqlite3"
+            with sqlite3.connect(db) as connection:
+                connection.execute("""CREATE TABLE requests (
+                    id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('engine','model')),
+                    prompt TEXT NOT NULL, status TEXT NOT NULL
+                        CHECK(status IN ('pending','needs_input','ready','confirmed')),
+                    message TEXT NOT NULL DEFAULT '', result_ids TEXT NOT NULL DEFAULT '[]',
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""")
+                connection.execute("INSERT INTO requests(id,kind,prompt,status) VALUES ('old','model','Find it','pending')")
+            connection.close()
+            tui_data.resolve_request("old", "canceled", "Closed by user", path=db)
+            self.assertEqual(tui_data.get_request("old", db)["status"], "canceled")
+
+    @unittest.skipUnless(shutil.which("tmux") and hasattr(os, "getuid"), "tmux is optional")
+    def test_tmux_wheel_scrolls_history_and_teardown_is_isolated(self) -> None:
+        tmux = shutil.which("tmux")
+        socket = f"llmbench-test-{uuid.uuid4().hex[:10]}"
+        other = f"llmbench-other-{uuid.uuid4().hex[:10]}"
+        command = [tmux, "-L", socket, "-f", str(tui.TMUX_CONFIG), "new-session", "-s", "agent",
+                   "--", "sh -c 'seq 1 100; sleep 10'"]
+
+        class Probe(App):
+            def compose(self) -> ComposeResult:
+                yield tui.CodexTerminal(command=command, id="terminal")
+
+        try:
+            subprocess.run([tmux, "-L", other, "-f", "/dev/null", "new-session", "-d", "-s", "other",
+                            "--", "sleep 10"], check=True)
+
+            async def exercise():
+                app = Probe()
+                app._filters = [item for item in app._filters if not isinstance(item, Monochrome)]
+                async with app.run_test(size=(90, 30)) as pilot:
+                    terminal = app.query_one("#terminal", tui.CodexTerminal)
+                    terminal.tmux_mode = True
+                    for _ in range(20):
+                        await asyncio.sleep(0.02)
+                        await pilot.pause()
+                        top = terminal.board.blitter.current_buffer.get_line_text(0).strip()
+                        if top.isdigit() and int(top) >= 70:
+                            break
+                    self.assertTrue(top.isdigit(), top)
+                    terminal.on_mouse_scroll_up(SimpleNamespace(
+                        offset=SimpleNamespace(x=5, y=5), stop=lambda: None))
+                    for _ in range(20):
+                        await asyncio.sleep(0.02)
+                        await pilot.pause()
+                        scrolled = terminal.board.blitter.current_buffer.get_line_text(0).strip().split()[0]
+                        if scrolled.isdigit() and int(scrolled) < int(top):
+                            break
+                    self.assertLess(int(scrolled), int(top))
+                    self.assertEqual(subprocess.check_output(
+                        [tmux, "-L", socket, "display-message", "-p", "-t", "agent", "#{pane_in_mode}"],
+                        text=True).strip(), "1")
+                    return terminal.board.process
+
+            client = asyncio.run(exercise())
+            if client is not None:
+                client.wait(timeout=2)
+
+            async def teardown():
+                app = tui.BenchmarkApp()
+                async with app.run_test(size=(90, 30)):
+                    app.tmux_sockets["terminal"] = (tmux, socket)
+
+            with patch.object(tui, "migrate_old_files", lambda: None):
+                asyncio.run(teardown())
+            self.assertNotEqual(subprocess.run([tmux, "-L", socket, "has-session"],
+                                               capture_output=True).returncode, 0)
+            socket_dir = Path(os.environ.get("TMUX_TMPDIR") or "/tmp") / f"tmux-{os.getuid()}"
+            self.assertFalse((socket_dir / socket).exists())
+            self.assertEqual(subprocess.run([tmux, "-L", other, "has-session"],
+                                            capture_output=True).returncode, 0)
+        finally:
+            subprocess.run([tmux, "-L", socket, "kill-server"], capture_output=True)
+            subprocess.run([tmux, "-L", other, "kill-server"], capture_output=True)
+            (Path(os.environ.get("TMUX_TMPDIR") or "/tmp") / f"tmux-{os.getuid()}" / other).unlink(missing_ok=True)
+
+    @unittest.skipUnless(shutil.which("tmux") and hasattr(os, "getuid"), "tmux is optional")
+    def test_private_tmux_pane_reports_codex_exit_status(self) -> None:
+        tmux = shutil.which("tmux")
+        for expected in (0, 9):
+            socket = f"llmbench-exit-test-{uuid.uuid4().hex[:10]}"
+            try:
+                subprocess.run([tmux, "-L", socket, "-f", str(tui.TMUX_CONFIG), "new-session",
+                                "-d", "-s", "agent", "--", f"sh -c 'exit {expected}'"], check=True)
+                for _ in range(20):
+                    state, code = tui.BenchmarkApp.tmux_pane_state(tmux, socket)
+                    if state == "dead":
+                        break
+                    time.sleep(0.01)
+                self.assertEqual((state, code), ("dead", expected))
+            finally:
+                subprocess.run([tmux, "-L", socket, "kill-server"], capture_output=True)
+                (Path(os.environ.get("TMUX_TMPDIR") or "/tmp") / f"tmux-{os.getuid()}" / socket).unlink(missing_ok=True)
+
     def test_embedded_suite_preflight_and_exit(self) -> None:
         created = []
         real_terminal = Terminal
@@ -246,6 +427,7 @@ class SetupTest(unittest.TestCase):
             patch.object(tui, "create_suite", lambda *args: created.append(args)),
             patch.object(tui, "show_suite", lambda _id: {"suite": {"status": "frozen"}}),
             patch.object(tui.BenchmarkApp, "embedded_terminal_available", lambda _self: True),
+            patch.object(tui, "embedded_codex_command", lambda prompt: (["codex"], None)),
             patch.object(tui, "CodexTerminal", lambda command, id: real_terminal(
                 command=["sh", "-c", "printf 'suite\\n'"], id=id)),
         ]
@@ -503,6 +685,20 @@ class SetupTest(unittest.TestCase):
             ])
             self.assertEqual(event.stop.call_count, 3)
             self.assertTrue(terminal.transcript_open)
+
+    def test_tmux_is_optional_and_command_keeps_prompt_literal(self) -> None:
+        prompt = "Benchmark user's model; echo should-not-run"
+        with patch.object(tui.shutil, "which", return_value=None):
+            command, socket = tui.embedded_codex_command(prompt)
+        self.assertIsNone(socket)
+        self.assertEqual(command[-1], prompt)
+        self.assertIn("--no-alt-screen", command)
+        with patch.object(tui.shutil, "which", return_value="/usr/bin/tmux"):
+            command, socket = tui.embedded_codex_command(prompt)
+        self.assertTrue(socket.startswith("llmbench-"))
+        self.assertEqual(command[0], "/usr/bin/tmux")
+        self.assertEqual(command[command.index("--") + 1], shlex.join([
+            "codex", "--no-daemon", "--no-alt-screen", "-C", str(tui.ROOT), prompt]))
 
 
     def test_agent_request_questions_and_confirmation(self) -> None:

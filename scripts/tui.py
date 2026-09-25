@@ -6,9 +6,11 @@ import json
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 from rich.markup import escape
@@ -34,6 +36,7 @@ from tui_data import (
 )
 
 TYPES = ("git", "package", "container", "remote", "local")
+TMUX_CONFIG = Path(__file__).with_name("tmux-agent.conf")
 LOCATOR_LABELS = {
     "git": "Git URL", "package": "Package name", "container": "Container image",
     "remote": "Service model ID or endpoint", "local": "Executable path",
@@ -75,11 +78,12 @@ class SearchableSelectionList(SelectionList):
 
 
 class CodexTerminal(Terminal):
-    """Use Codex's transcript overlay for wheel access to older output."""
+    """Forward wheel events to tmux, or use Codex's transcript without tmux."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.transcript_open = False
+        self.tmux_mode = False
 
     def toggle_transcript(self) -> None:
         self.board.display.input_key("t", constants.KEY_MOD_CTRL)
@@ -93,6 +97,10 @@ class CodexTerminal(Terminal):
         super().on_key(event)
 
     def on_mouse_scroll_up(self, event) -> None:
+        if self.tmux_mode:
+            self.board.host.write(f"\x1b[<64;{event.offset.x + 1};{event.offset.y + 1}M")
+            event.stop()
+            return
         if not self.transcript_open:
             self.toggle_transcript()
         for _ in range(3):
@@ -100,12 +108,26 @@ class CodexTerminal(Terminal):
         event.stop()
 
     def on_mouse_scroll_down(self, event) -> None:
+        if self.tmux_mode:
+            self.board.host.write(f"\x1b[<65;{event.offset.x + 1};{event.offset.y + 1}M")
+            event.stop()
+            return
         if self.transcript_open:
             for _ in range(3):
                 self.board.display.input_key("down")
             event.stop()
         else:
             super().on_mouse_scroll_down(event)
+
+
+def embedded_codex_command(prompt: str) -> tuple[list[str], str | None]:
+    codex = ["codex", "--no-daemon", "--no-alt-screen", "-C", str(ROOT), prompt]
+    tmux = shutil.which("tmux")
+    if tmux:
+        socket = f"llmbench-{os.getpid()}-{uuid.uuid4().hex[:12]}"
+        return ([tmux, "-L", socket, "-f", str(TMUX_CONFIG),
+                 "new-session", "-s", "agent", "--", shlex.join(codex)], socket)
+    return codex, None
 
 
 class BenchmarkApp(App[None]):
@@ -156,6 +178,8 @@ class BenchmarkApp(App[None]):
         }
         self.active_requests: set[str] = set()
         self.terminals: dict[str, tuple[str, ...]] = {}
+        self.tmux_sockets: dict[str, tuple[str, str]] = {}
+        self.tmux_missing: dict[str, int] = {}
         self.announced_preparations: set[str] = set()
         self.picker_filters = {"engine": "", "model": ""}
         self.selection_cache = {
@@ -168,6 +192,68 @@ class BenchmarkApp(App[None]):
                 and os.environ.get("TERM", "").lower() not in {"", "dumb", "unknown"}
                 and "NO_COLOR" not in os.environ
                 and os.environ.get("CLICOLOR") != "0")
+
+    def cleanup_tmux(self, terminal_id: str) -> None:
+        self.tmux_missing.pop(terminal_id, None)
+        session = self.tmux_sockets.pop(terminal_id, None)
+        if session:
+            tmux, socket = session
+            try:
+                subprocess.run([tmux, "-L", socket, "kill-server"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=3, check=False)
+                live = subprocess.run([tmux, "-L", socket, "has-session"],
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                      timeout=3, check=False).returncode == 0
+                if not live and socket.startswith("llmbench-") and hasattr(os, "getuid"):
+                    socket_path = (Path(os.environ.get("TMUX_TMPDIR") or tempfile.gettempdir()) /
+                                   f"tmux-{os.getuid()}" / socket)
+                    try:
+                        info = socket_path.lstat()
+                        if stat.S_ISSOCK(info.st_mode) and info.st_uid == os.getuid():
+                            socket_path.unlink()
+                    except FileNotFoundError:
+                        pass
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                self.log.error(f"Could not close private tmux server {socket}: {exc}")
+
+    @staticmethod
+    def tmux_pane_state(tmux: str, socket: str) -> tuple[str, int | None]:
+        try:
+            result = subprocess.run(
+                [tmux, "-L", socket, "list-panes", "-t", "agent", "-F", "#{pane_dead} #{pane_dead_status}"],
+                capture_output=True, text=True, timeout=1, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return "missing", None
+        if result.returncode:
+            return "missing", None
+        fields = result.stdout.strip().split()
+        if fields and fields[0] == "1":
+            try:
+                return "dead", int(fields[1])
+            except (IndexError, ValueError):
+                return "dead", 1
+        return "running", None
+
+    def on_unmount(self) -> None:
+        for info in self.terminals.values():
+            if info[0] == "setup":
+                try:
+                    request = get_request(info[2])
+                    if request["status"] == "pending":
+                        signal = completion_signal(info[2])
+                        if signal:
+                            try:
+                                resolve_request(info[2], "ready", signal, request_results(info[2]))
+                            except (ValueError, OSError) as exc:
+                                resolve_request(info[2], "failed", f"Completion rejected during shutdown: {exc}")
+                        else:
+                            resolve_request(info[2], "canceled", "TUI closed before Codex completed setup.")
+                except (ValueError, OSError) as exc:
+                    self.log.error(f"Could not finalize setup request {info[2]}: {exc}")
+        for terminal_id in list(self.tmux_sockets):
+            self.cleanup_tmux(terminal_id)
 
     def action_focus_agent_tabs(self) -> None:
         self.query_one("#agent-tabs Tabs", Tabs).focus()
@@ -562,12 +648,14 @@ class BenchmarkApp(App[None]):
         request = latest_request(kind)
         status = self.query_one(f"#{kind}-agent-status", Static)
         if request:
-            color = {"pending": "cyan", "needs_input": "yellow", "ready": "green", "confirmed": "green"}[request["status"]]
+            color = {"pending": "cyan", "needs_input": "yellow", "ready": "green", "confirmed": "green",
+                     "canceled": "yellow", "failed": "red"}[request["status"]]
             status.update(f"[{color}]{request['status']}[/{color}]  ·  {escape(request['message'] or request['prompt'])}")
         else:
             status.update("Describe what you want. The agent will install it or ask a question.")
         ask = self.query_one(f"#{kind}-ask", Button)
         ask.label = ("Answer & retry" if request and request["status"] == "needs_input"
+                     else "Retry agent" if request and request["status"] in {"canceled", "failed"}
                      else "Retry agent" if request and request["status"] == "pending" and request["id"] not in self.active_requests
                      else "Ask agent")
         ask.disabled = bool(request and (request["status"] == "ready" or request["id"] in self.active_requests))
@@ -576,6 +664,7 @@ class BenchmarkApp(App[None]):
         confirm.disabled = bool(request and request["id"] in self.active_requests)
 
     def poll_requests(self) -> None:
+        self.poll_tmux_sessions()
         for kind in ("engine", "model"):
             request = latest_request(kind)
             if not request or request["status"] != "pending":
@@ -586,7 +675,7 @@ class BenchmarkApp(App[None]):
             try:
                 resolve_request(request["id"], "ready", message, request_results(request["id"]))
             except (ValueError, OSError) as exc:
-                resolve_request(request["id"], "needs_input", f"Completion rejected: {exc}")
+                resolve_request(request["id"], "failed", f"Completion rejected: {exc}")
             self.active_requests.discard(request["id"])
             (self.refresh_engines if kind == "engine" else self.refresh_models)()
             self.message(f"{kind.title()} request {request['id']}: {get_request(request['id'])['status']}")
@@ -595,6 +684,19 @@ class BenchmarkApp(App[None]):
         if list_suites() != getattr(self, "suite_rows", []):
             self.refresh_suites()
         self.poll_suite_progress()
+
+    def poll_tmux_sessions(self) -> None:
+        for terminal_id, (tmux, socket) in list(self.tmux_sockets.items()):
+            state, exit_code = self.tmux_pane_state(tmux, socket)
+            if state == "dead":
+                self.finish_embedded_terminal(terminal_id, exit_code or 0)
+                continue
+            if state == "running":
+                self.tmux_missing.pop(terminal_id, None)
+                continue
+            self.tmux_missing[terminal_id] = self.tmux_missing.get(terminal_id, 0) + 1
+            if self.tmux_missing[terminal_id] >= 2:
+                self.finish_embedded_terminal(terminal_id, 1)
 
     def poll_suite_progress(self) -> None:
         suite_id = self.value("suite-id")
@@ -751,6 +853,8 @@ class BenchmarkApp(App[None]):
             ident = request["id"]
         elif request and request["status"] == "pending":
             ident = request["id"]
+        elif request and request["status"] in {"canceled", "failed"}:
+            ident = create_request(kind, prompt_text or request["prompt"])
         else:
             ident = create_request(kind, prompt_text)
         if ident in self.active_requests:
@@ -795,12 +899,21 @@ class BenchmarkApp(App[None]):
         if self.embedded_terminal_available():
             terminal_id = f"terminal-{ident}"
             if self.query(f"#{pane_id}"):
+                self.cleanup_tmux(terminal_id)
+                self.terminals.pop(terminal_id, None)
                 await tabs.remove_pane(pane_id)
+            command, socket = embedded_codex_command(prompt)
+            terminal = CodexTerminal(command=command, id=terminal_id)
+            terminal.tmux_mode = socket is not None
+            toolbar = (Static("Mouse wheel: scroll history · q: return to Codex") if socket else
+                       Button("Transcript / scroll history (Ctrl+T)", id=f"transcript-{terminal_id}"))
             self.terminals[terminal_id] = ("setup", kind, ident)
+            if socket:
+                self.tmux_sockets[terminal_id] = (command[0], socket)
             await tabs.add_pane(TabPane(
                 f"{kind}: {ident[-8:]}",
-                Button("Transcript / scroll history (Ctrl+T)", id=f"transcript-{terminal_id}"),
-                CodexTerminal(command=["codex", "--no-daemon", "-C", str(ROOT), prompt], id=terminal_id),
+                toolbar,
+                terminal,
                 id=pane_id,
             ))
             tabs.active = pane_id
@@ -908,11 +1021,11 @@ class BenchmarkApp(App[None]):
                 )
             else:
                 detail = response.get("error") if isinstance(response, dict) else f"exit status {code}"
-                resolve_request(ident, "needs_input",
-                                f"Agent stopped without a valid result ({detail}). Review its output and enter a correction or retry.")
+                resolve_request(ident, "failed",
+                                f"Agent stopped without a valid result ({detail}). Review its output and retry.")
         except (ValueError, OSError) as exc:
-            resolve_request(ident, "needs_input",
-                            f"Agent result was rejected: {exc}. Review its output and provide corrected details.")
+            resolve_request(ident, "failed",
+                            f"Agent result was rejected: {exc}. Review its output and retry.")
         self.active_requests.discard(ident)
         (self.refresh_engines if kind == "engine" else self.refresh_models)()
         self.refresh_request(kind)
@@ -949,14 +1062,25 @@ class BenchmarkApp(App[None]):
                 self.message(f"{stage} failed: {exc}")
                 return
             self.refresh_suites()
-            terminal_id = f"suite-terminal-{len(self.terminals)}"
-            self.terminals[terminal_id] = ("suite", stage, suite_id)
+            terminal_id = f"suite-terminal-{uuid.uuid4().hex[:12]}"
             if self.query(f"#{pane_id}"):
+                for old_id, info in list(self.terminals.items()):
+                    if info == ("suite", stage, suite_id):
+                        self.cleanup_tmux(old_id)
+                        self.terminals.pop(old_id, None)
                 await tabs.remove_pane(pane_id)
+            command, socket = embedded_codex_command(prompt)
+            terminal = CodexTerminal(command=command, id=terminal_id)
+            terminal.tmux_mode = socket is not None
+            toolbar = (Static("Mouse wheel: scroll history · q: return to Codex") if socket else
+                       Button("Transcript / scroll history (Ctrl+T)", id=f"transcript-{terminal_id}"))
+            self.terminals[terminal_id] = ("suite", stage, suite_id)
+            if socket:
+                self.tmux_sockets[terminal_id] = (command[0], socket)
             await tabs.add_pane(TabPane(
                 f"{stage}: {suite_id}",
-                Button("Transcript / scroll history (Ctrl+T)", id=f"transcript-{terminal_id}"),
-                CodexTerminal(command=["codex", "--no-daemon", "-C", str(ROOT), prompt], id=terminal_id),
+                toolbar,
+                terminal,
                 id=pane_id,
             ))
             tabs.active = pane_id
@@ -988,6 +1112,18 @@ class BenchmarkApp(App[None]):
 
     def on_terminal_process_exited(self, event: Terminal.ProcessExited) -> None:
         terminal_id = getattr(event._sender, "id", None)
+        self.finish_embedded_terminal(terminal_id, event.exit_code)
+
+    def finish_embedded_terminal(self, terminal_id: str, exit_code: int) -> None:
+        tmux_session = self.tmux_sockets.get(terminal_id)
+        detached = False
+        if tmux_session:
+            state, pane_code = self.tmux_pane_state(*tmux_session)
+            if state == "dead":
+                exit_code = pane_code or 0
+            elif state == "running":
+                detached = True
+        self.cleanup_tmux(terminal_id)
         info = self.terminals.pop(terminal_id, None)
         if not info:
             return
@@ -996,25 +1132,27 @@ class BenchmarkApp(App[None]):
             if stage == "prepare":
                 status = show_suite(suite_id)["suite"]["status"]
                 self.poll_suite_progress()
-                self.message(f"Codex preparation session exited ({event.exit_code}); suite {suite_id}: {status}")
+                self.message(f"Codex preparation session exited ({exit_code}); suite {suite_id}: {status}")
             else:
-                self.message(f"Run agent exited with status {event.exit_code}; review its results")
+                self.message(f"Run agent exited with status {exit_code}; review its results")
             return
         _, kind, ident = info
-        if get_request(ident)["status"] in {"ready", "confirmed"}:
+        if get_request(ident)["status"] != "pending":
             self.active_requests.discard(ident)
             self.refresh_request(kind)
             return
         ids = request_results(ident)
         removals = request_removals(ident)
+        signal = completion_signal(ident)
         try:
-            if event.exit_code == 0 and (ids or removals):
-                resolve_request(ident, "ready", f"Verified {len(ids)} saved {kind} setup(s) and {len(removals)} removal(s)", ids)
+            if signal:
+                resolve_request(ident, "ready", signal, ids)
             else:
-                reason = "No results were recorded" if not ids and not removals else f"agent exit status {event.exit_code}"
-                resolve_request(ident, "needs_input", f"{reason}. Review the terminal and retry or provide a correction.")
+                status = "canceled" if detached or exit_code in {0, 130, 143, -2, -15} else "failed"
+                partial = " Saved catalog changes remain for review." if ids or removals else ""
+                resolve_request(ident, status, f"Codex closed before completing setup (exit {exit_code}).{partial}")
         except (ValueError, OSError) as exc:
-            resolve_request(ident, "needs_input", f"Agent result was rejected: {exc}. Correct it and retry.")
+            resolve_request(ident, "failed", f"Agent result was rejected: {exc}. Review its output and retry.")
         self.active_requests.discard(ident)
         (self.refresh_engines if kind == "engine" else self.refresh_models)()
         self.refresh_request(kind)
