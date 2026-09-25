@@ -7,6 +7,6 @@
 - Keep source, build, runtime environment, model artifacts, commands, result, and revision separate for every engine.
 - Research agents report exact per-engine/per-model command packets. The coordinator freezes a plan; one execution agent runs it on each machine.
 - Use coherent generation and the pinned llama-benchy track when its chat protocol is supported or adapted. Record an explicit unavailable result otherwise.
-- Validate source revisions, actual executable flags, model loading, output coherence, and intended optimization telemetry before measuring throughput.
+- Validate source revisions, actual executable flags, model loading, the RUNBOOK output sanity gate, and intended optimization telemetry before measuring throughput. Reasoning-only output can pass that gate; assess answer completeness and task correctness separately.
 - Preserve raw commands, prompts, outputs, logs, benchmark JSON, memory samples, errors, and teardown. Mark failed and slower cases.
 - Never publish private model artifacts, credentials, personal prompts, or raw captures that contain private data.

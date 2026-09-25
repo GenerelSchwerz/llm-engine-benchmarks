@@ -102,7 +102,7 @@ If `-ngl all` plus the chosen cache cannot fit dense layers, KV, workspace, and 
 
 ## Two measurements for each qualified model
 
-1. **Coherent-text server run.** Start a fresh server with one of the target-only commands. Substitute its alias `q36`, `q38`, or `dsv4` in the request. Preserve the complete response, finish reason, token count, timing, process logs, and actual GPU/RAM usage. Check that it answers the task and that final cache/grouped telemetry shows the intended path. An architecture appearing in source, a successful load, or a first token is insufficient.
+1. **Coherent-text server run.** Start a fresh server with one of the target-only commands. Substitute its alias `q36`, `q38`, or `dsv4` in the request. Preserve visible and reasoning text, finish reason, token count, timing, process logs, and actual GPU/RAM usage. Apply the runbook's minimal output sanity gate, report answer completeness and correctness separately, and check final cache/grouped telemetry for the intended path. An architecture appearing in source, a successful load, or a first token is insufficient.
 
    ```sh
    curl -fsS "http://127.0.0.1:$PORT/v1/chat/completions" \

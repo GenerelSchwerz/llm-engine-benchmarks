@@ -44,7 +44,7 @@ TurboQuant KV is a **separate** sweep: `-ctk q8_0 -ctv turbo3` is documented, bu
 
 ## Two measurements per model
 
-**Coherent text:** Start one of the three servers in a fresh process and replace the alias in the request with `q36`, `q38`, or `dsv4`. Save the complete answer, finish reason, generated count, and server log. Require a coherent, completed response before benchmarking throughput.
+**Coherent text:** Start one of the three servers in a fresh process and replace the alias in the request with `q36`, `q38`, or `dsv4`. Save visible and reasoning text, finish reason, generated count, and server log. Apply the runbook's minimal output sanity gate before benchmarking throughput; report answer completion separately.
 
 ```sh
 curl -fsS "http://127.0.0.1:$PORT/v1/chat/completions" \

@@ -26,4 +26,4 @@ Mark unsupported models and modes explicitly. Do not copy a command from another
 
 ## Both measurement methods
 
-Describe a coherent generation request using the suite's frozen fixture and an independent llama-benchy command against the same engine/model configuration. If llama-benchy needs a protocol adapter, give its source/version and mapping. If the engine cannot be adapted faithfully, mark that method unavailable and explain why. Record actual output length and complete text for both methods.
+Describe a coherent generation request using the suite's frozen fixture and an independent llama-benchy command against the same engine/model configuration. If llama-benchy needs a protocol adapter, give its source/version and mapping. If the engine cannot be adapted faithfully, mark that method unavailable and explain why. Record actual output length and all visible and reasoning text for both methods. Use the [runbook's minimal output sanity gate](../RUNBOOK.md#method-a-coherent-generation); review task completion and correctness separately.

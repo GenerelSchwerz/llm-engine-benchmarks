@@ -27,7 +27,7 @@ The documented non-cache comparison uses `--no-mmap -ngl 99 --n-cpu-moe N`; `N` 
 
 ## Two Qwen3.6 measurements
 
-**Coherent text.** Use a fresh process and one request at a time. Save the complete response and the final hit-rate and wait-time logs. The coherent response must actually complete the prompt; a server start or first token alone is insufficient.
+**Coherent text.** Use a fresh process and one request at a time. Save visible and reasoning text plus the final hit-rate and wait-time logs. Apply the runbook's minimal output sanity gate and record task completion separately; a server start or first token alone is insufficient.
 
 ```sh
 curl -fsS "http://127.0.0.1:$PORT/v1/chat/completions" \

@@ -22,7 +22,7 @@ If `--fit on` chooses full VRAM residency, also run a host-expert matched baseli
 
 ## Two required measurements per model
 
-**Coherent text:** With the relevant server above, save the complete response and log. Substitute `q36`, `q38` or `dv4` for the model alias, and perform a second longer request to prove sustained decode and completion. The JSON response alone does not prove output quality; inspect the code and explanation.
+**Coherent text:** With the relevant server above, save the complete response and log, including reasoning fields. Substitute `q36`, `q38` or `dv4` for the model alias, and perform a second longer request to prove sustained decode. Apply the runbook's minimal output sanity gate; assess whether the code and explanation complete the task separately.
 
 ```sh
 curl -fsS http://127.0.0.1:<PORT>/v1/chat/completions \

@@ -65,7 +65,10 @@ def make_prompt(stage: str, suite_id: str, engines: list[str], models: list[str]
         ),
         "run": (
             "Run the already frozen suite plan from SQLite with one execution agent per machine. "
-            "Validate builds and model output, execute coherent-generation and "
+            "Validate builds and the RUNBOOK output sanity gate across visible and reasoning channels. "
+            "Reasoning-only output or a fixed-length stop may pass that minimal gate; record answer "
+            "completeness and task correctness separately rather than blocking throughput automatically. "
+            "Execute coherent-generation and "
             "llama-benchy tracks where supported, retain raw evidence, and report "
             "qualified results. If no complete frozen plan exists, prepare it first "
             "and identify missing inputs before measurement. Do not publish results."
