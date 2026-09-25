@@ -93,10 +93,13 @@ class SetupTest(unittest.TestCase):
                     app = tui.BenchmarkApp()
                     async with app.run_test(size=(100, 40)):
                         app.query_one("#suite-id", Input).value = "demo"
-                        app.query_one("#run-setup-name", Input).value = "8 GiB"
+                        self.assertEqual(app.query_one("#run-vram-ceiling", Input).type, "number")
+                        self.assertFalse(app.query_one("#run-setup-actions").display)
                         app.query_one("#run-vram-ceiling", Input).value = "8"
                         app.query_one("#run-description", TextArea).text = "Start with a small cache"
                         original = app.save_run_setup()
+                        self.assertEqual(run_store.show_setup(original, db)["name"], "Start with a small cache")
+                        self.assertTrue(app.query_one("#run-setup-actions").display)
                         app.clone_run_setup()
                         self.assertNotEqual(app.run_setup_id, original)
                         app.query_one("#run-vram-ceiling", Input).value = "12"
@@ -104,6 +107,12 @@ class SetupTest(unittest.TestCase):
                         copy = app.save_run_setup()
                         self.assertEqual(run_store.show_setup(copy, db)["vram_ceiling_gib"], 12)
                         self.assertEqual(run_store.show_setup(original, db)["vram_ceiling_gib"], 8)
+                        app.new_run_setup()
+                        app.query_one("#run-description", TextArea).text = "Target max VRAM for 64k context, q8"
+                        inferred = app.save_run_setup()
+                        self.assertEqual(run_store.show_setup(inferred, db)["name"],
+                                         "Target max VRAM for 64k context, q8")
+                        self.assertIsNone(run_store.show_setup(inferred, db)["vram_ceiling_gib"])
 
                 asyncio.run(exercise())
             finally:
@@ -144,7 +153,6 @@ class SetupTest(unittest.TestCase):
                         app.query_one("#engine-list", SelectionList).select(engine)
                         app.query_one("#model-list", SelectionList).select(model)
                         app.query_one("#suite-id", Input).value = "demo"
-                        app.query_one("#run-setup-name", Input).value = "12 GiB"
                         app.query_one("#run-vram-ceiling", Input).value = "12"
                         app.query_one("#run-description", TextArea).text = "Tune cache capacity"
                         app.launch_agent("run")
@@ -918,6 +926,13 @@ class SetupTest(unittest.TestCase):
                         self.assertEqual(app.value("suite-id"), "demo-suite")
                         self.assertEqual(app.selected("#engine-list"), [engine])
                         self.assertEqual(app.selected("#model-list"), [model])
+                        await pilot.pause()
+                        app.query_one("#main-tabs", TabbedContent).active = "launch"
+                        app.query_one("#run-description", TextArea).focus()
+                        await pilot.pause()
+                        self.assertEqual(app.query_one("#main-tabs", TabbedContent).active, "launch")
+                        self.assertIn("demo-suite", str(app.query_one("#run-suite-status").content))
+                        self.assertTrue(app.query_one("#run", tui.Button).disabled)
                         app.remove_suite()
                         self.assertEqual(len(suite_store.list_suites(db)), 1)
                         app.remove_suite()

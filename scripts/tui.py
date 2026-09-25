@@ -155,7 +155,7 @@ def make_build_prompt(engine: dict) -> str:
 
 class BenchmarkApp(App[None]):
     TITLE = "LLM Benchmarks"
-    SUB_TITLE = "engines · models · suite"
+    SUB_TITLE = "plan · run · review"
     BINDINGS = [("q", "quit", "Quit"), ("escape", "clear_edit", "Clear edit"),
                 Binding("ctrl+g", "focus_agent_tabs", "Leave agent", priority=True),
                 Binding("f4", "close_agent", "Close agent", priority=True)]
@@ -177,11 +177,13 @@ class BenchmarkApp(App[None]):
     .agent-panel { height: 1fr; }
     Terminal { height: 1fr; }
     CodexTerminal { height: 1fr; }
-    #suite-list, #run-setup-list { height: 3; border: round $primary; margin-bottom: 1; }
+    #suite-list, #run-setup-list { height: 3; max-width: 96; border: round $primary; margin-bottom: 1; }
+    #suite-id, #run-vram-ceiling, #run-description { max-width: 96; }
     #run-description { height: 4; border: round $primary; margin-bottom: 1; }
-    #suite-scroll { height: 1fr; }
+    #suite-scroll, #run-scroll { height: 1fr; }
     #suite-detail { height: auto; color: $text-muted; }
-    #suite-scroll .buttons { margin: 0 0 1 0; }
+    #suite-scroll .buttons, #run-scroll .buttons { margin: 0 0 1 0; }
+    #run-suite-status { height: auto; margin-bottom: 1; color: $text-muted; }
     .request-status { margin: 1 0; }
     .mode-button { dock: bottom; height: 3; margin: 1 0 0 0; }
     #agent-tabs { height: 1fr; }
@@ -487,9 +489,7 @@ class BenchmarkApp(App[None]):
                 yield Button("Switch to manual setup", id="model-mode", classes="mode-button")
             with TabPane("Suite", id="suite"):
                 with VerticalScroll(id="suite-scroll"):
-                    yield Label("Suite · benchmark plan", classes="section-title")
-                    yield Static("Choose engines and models, then freeze their commands for repeatable runs.")
-                    yield Label("Saved suites", classes="field-label")
+                    yield Label("Benchmark suites", classes="section-title")
                     yield OptionList(id="suite-list")
                     yield Static("No saved suites yet.", id="suite-empty")
                     with Horizontal(classes="buttons"):
@@ -497,32 +497,33 @@ class BenchmarkApp(App[None]):
                         yield Button("Open", id="suite-open", variant="primary")
                         yield Button("Delete", id="suite-delete", variant="error")
                     yield Static("Highlight a saved suite for details; Open loads it below.", id="suite-detail")
-                    yield Label("Suite name (draft or opened)", classes="field-label")
+                    yield Label("Suite name", classes="field-label")
                     yield Input(id="suite-id", placeholder="e.g. september-sweep")
                     yield Checkbox("Check upstream updates during preparation", id="check-updates")
                     yield Static(id="suite-summary")
                     with Horizontal(classes="buttons"):
                         yield Button("Save draft", id="suite-create")
                         yield Button("Prepare with Codex", id="prepare", variant="primary")
-                    yield Label("Run setup · optional launch instructions", classes="section-title")
-                    yield Static("Reuse a VRAM ceiling and instructions. Each launch gets its own saved copy.")
+                    yield Static("No suite selected", id="suite-stage-status")
+            with TabPane("Run", id="launch"):
+                with VerticalScroll(id="run-scroll"):
+                    yield Label("Run a frozen suite", classes="section-title")
+                    yield Static("Open a suite in the Suite tab to choose the benchmark plan.", id="run-suite-status")
+                    yield Label("Saved run setups", classes="field-label")
                     yield OptionList(id="run-setup-list")
-                    yield Static("No saved run setups for this suite.", id="run-setup-empty")
-                    with Horizontal(classes="buttons"):
+                    yield Static("No saved setups. Enter instructions below or run with defaults.", id="run-setup-empty")
+                    with Horizontal(classes="buttons", id="run-setup-actions"):
                         yield Button("New", id="run-setup-new")
                         yield Button("Open", id="run-setup-open")
                         yield Button("Clone", id="run-setup-clone")
                         yield Button("Delete", id="run-setup-delete", variant="error")
-                    yield Label("Setup name", classes="field-label")
-                    yield Input(id="run-setup-name", placeholder="e.g. 8 GiB placement sweep")
-                    yield Label("VRAM ceiling in GiB (optional)", classes="field-label")
-                    yield Input(id="run-vram-ceiling", placeholder="e.g. 8 or 12")
-                    yield Label("Run description and instructions (optional)", classes="field-label")
+                    yield Label("Instructions for this run (optional)", classes="field-label")
                     yield TextArea("", id="run-description")
+                    yield Label("Hard VRAM ceiling in GiB (number only, optional)", classes="field-label")
+                    yield Input(id="run-vram-ceiling", placeholder="e.g. 8 or 12", type="number", valid_empty=True)
                     with Horizontal(classes="buttons"):
                         yield Button("Save setup", id="run-setup-save", variant="success")
                         yield Button("Run frozen plan", id="run", variant="primary")
-                    yield Static("Run frozen plan launches the selected suite with these instructions.")
             with TabPane("Results", id="results"):
                 yield Label("Local runs", classes="section-title")
                 yield OptionList(id="result-list")
@@ -536,7 +537,6 @@ class BenchmarkApp(App[None]):
                 with TabbedContent(id="agent-tabs"):
                     with TabPane("Overview", id="agent-overview"):
                         yield Static("Agent output appears here while setup requests run.")
-        yield Static("No suite selected", id="suite-stage-status")
         yield RichLog(id="messages", highlight=True, markup=True)
         yield Footer()
 
@@ -597,9 +597,9 @@ class BenchmarkApp(App[None]):
 
     def update_summary(self) -> None:
         self.query_one("#suite-summary", Static).update(
-            f"Engines: {len(self.selected('#engine-list'))} selected\n"
-            f"Models: {len(self.selected('#model-list'))} selected\n"
-            f"Upstream updates: {'check' if self.query_one('#check-updates', Checkbox).value else 'skip'}"
+            f"{len(self.selected('#engine-list'))} engines · "
+            f"{len(self.selected('#model-list'))} models · "
+            f"updates {'on' if self.query_one('#check-updates', Checkbox).value else 'off'}"
         )
 
     def refresh_suites(self) -> None:
@@ -842,6 +842,7 @@ class BenchmarkApp(App[None]):
         picker.display = bool(rows)
         picker.styles.height = min(len(rows) + 2, 8)
         self.query_one("#run-setup-empty", Static).display = not rows
+        self.query_one("#run-setup-actions", Horizontal).display = bool(rows)
         for action in ("open", "clone", "delete"):
             self.query_one(f"#run-setup-{action}", Button).disabled = not rows
         for row in rows:
@@ -863,11 +864,10 @@ class BenchmarkApp(App[None]):
         self.run_setup_id = None
         self.pending_run_setup_delete = None
         self.query_one("#run-setup-list", OptionList).highlighted = None
-        self.query_one("#run-setup-name", Input).value = ""
         self.query_one("#run-vram-ceiling", Input).value = ""
         self.query_one("#run-description", TextArea).text = ""
         self.remember()
-        self.message("New run setup; enter a name to save it")
+        self.message("New run setup; its name will be generated from your instructions")
 
     def open_run_setup(self) -> None:
         ident = self.highlighted_run_setup()
@@ -877,7 +877,6 @@ class BenchmarkApp(App[None]):
         if row["suite_id"] != self.value("suite-id"):
             raise ValueError("Run setup belongs to another suite")
         self.run_setup_id = ident
-        self.query_one("#run-setup-name", Input).value = row["name"]
         self.query_one("#run-vram-ceiling", Input).value = (
             f"{row['vram_ceiling_gib']:g}" if row["vram_ceiling_gib"] is not None else "")
         self.query_one("#run-description", TextArea).text = row["description"]
@@ -888,15 +887,13 @@ class BenchmarkApp(App[None]):
     def save_run_setup(self) -> str:
         ceiling = self.value("run-vram-ceiling")
         description = self.query_one("#run-description", TextArea).text
-        name = self.value("run-setup-name") or (
-            f"{ceiling} GiB run" if ceiling else
-            next((line.strip()[:80] for line in description.splitlines() if line.strip()), "Run setup"))
-        self.query_one("#run-setup-name", Input).value = name
+        name = next((" ".join(line.split())[:120] for line in description.splitlines() if line.strip()),
+                    f"{ceiling} GiB ceiling" if ceiling else "Default setup")
         ident = save_setup(self.value("suite-id"), name, ceiling, description, self.run_setup_id)
         self.run_setup_id = ident
         self.refresh_run_setups(ident)
         self.remember()
-        self.message(f"Saved run setup {self.value('run-setup-name')}")
+        self.message(f"Saved run setup {name}")
         return ident
 
     def clone_run_setup(self) -> None:
@@ -906,7 +903,7 @@ class BenchmarkApp(App[None]):
         ident = clone_setup(source)
         self.refresh_run_setups(ident)
         self.open_run_setup()
-        self.query_one("#run-setup-name", Input).focus()
+        self.query_one("#run-description", TextArea).focus()
         self.message("Cloned setup; edit the copy and save your changes")
 
     def remove_run_setup(self) -> None:
@@ -926,8 +923,7 @@ class BenchmarkApp(App[None]):
 
     def run_setup_for_launch(self) -> str | None:
         description = self.query_one("#run-description", TextArea).text
-        if (self.run_setup_id or self.value("run-setup-name") or
-                self.value("run-vram-ceiling") or description.strip()):
+        if self.run_setup_id or self.value("run-vram-ceiling") or description.strip():
             return self.save_run_setup()
         return self.highlighted_run_setup()
 
@@ -1077,17 +1073,25 @@ class BenchmarkApp(App[None]):
     def poll_suite_progress(self) -> None:
         suite_id = self.value("suite-id")
         banner = self.query_one("#suite-stage-status", Static)
+        run_banner = self.query_one("#run-suite-status", Static)
+        run_button = self.query_one("#run", Button)
+        run_button.disabled = True
         if not suite_id:
             banner.update("No suite selected")
+            run_banner.update("Open a frozen suite in the Suite tab before launching a run.")
             return
         try:
             status = show_suite(suite_id)["suite"]["status"]
         except ValueError:
             banner.update(f"{escape(suite_id)} · no suite plan yet")
+            run_banner.update(f"{escape(suite_id)} has no saved plan. Open or prepare a suite first.")
             return
         if status != "frozen":
             banner.update(f"{escape(suite_id)} · draft plan · preparation in progress")
+            run_banner.update(f"{escape(suite_id)} is a draft. Prepare it before running.")
             return
+        run_button.disabled = False
+        run_banner.update(f"[green]{escape(suite_id)} · frozen plan[/green] · setup is optional")
         signal = preparation_signal(suite_id)
         if signal is None:
             banner.update(f"{escape(suite_id)} · plan frozen · agent completion not recorded")

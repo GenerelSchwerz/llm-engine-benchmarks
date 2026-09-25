@@ -23,13 +23,14 @@ uv run llama-benchy --version
 uv run scripts/tui.py
 ```
 
-The minimal terminal UI has five tabs:
+The minimal terminal UI has six tabs:
 
 | Tab | What you do |
 | --- | --- |
 | **Engines** | Ask an agent to find and install a fork in one sentence, toggle to a manual locator form, or build selected Git engines. |
 | **Models** | Ask an agent to find or install one or several models, or toggle to a manual locator form. |
-| **Suite** | Save and prepare a suite, then save, edit, or clone run setups before launching measurements. |
+| **Suite** | Save and prepare a benchmark plan from the selected engines and models. |
+| **Run** | Reuse or edit launch instructions, then run a frozen suite. |
 | **Results** | Browse local runs, pull saved findings, and discuss a selected run with Codex. |
 | **Agents** | Use Codex inside a separate terminal pane for each running agent. Monochrome terminals show a readable event log instead. |
 
@@ -41,7 +42,7 @@ The Suite tab lists names, status, counts, and preparation state. **New** clears
 
 A **suite** fixes what to compare: engines, models, and frozen command packets. A **run setup** supplies optional instructions for one launch, such as a VRAM ceiling. Several run setups can use the same frozen suite.
 
-Under **Run setups**, enter an optional VRAM ceiling in GiB and a description with instructions for the agent. Save a setup to reuse it, edit its description at any time, or **Clone** it to try a small change such as 8 GiB versus 12 GiB. **Run frozen plan** creates a new run ID and freezes a copy of the setup for that launch; later edits do not change past runs. An empty setup launches with no added ceiling or instructions. The agent can reread the saved copy with `uv run scripts/run_store.py show-run RUN_ID`. Each run gets its own `results/SUITE/RUN_ID/` directory. The VRAM number is a ceiling, not a request to fill VRAM exactly.
+In **Run**, write optional instructions for the agent, then enter a numeric VRAM ceiling in GiB only if you need a hard limit. The UI generates the setup name from your instructions. Save a setup to reuse it, edit its instructions at any time, or **Clone** it to try a small change such as 8 GiB versus 12 GiB. **Run frozen plan** creates a new run ID and freezes a copy of the setup for that launch; later edits do not change past runs. An empty setup launches with no added ceiling or instructions. The agent can reread the saved copy with `uv run scripts/run_store.py show-run RUN_ID`. Each run gets its own `results/SUITE/RUN_ID/` directory. The VRAM number is a ceiling, not a request to fill VRAM exactly.
 
 The **Results** tab includes older local result directories even if they lack a run registry entry. Select a run and choose **Pull findings** for a concise view of its final saved summary. **Talk to Codex** opens an interactive review in Agents, where you can ask questions directly. Codex can save reviewed findings through the validated `results_store.py record-findings` command, then **Pull findings** shows that record. Raw results and findings stay local under ignored `results/`. Color terminals support interactive chat; monochrome mode provides a one-shot review log.
 
