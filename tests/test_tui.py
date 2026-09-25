@@ -908,6 +908,8 @@ class SetupTest(unittest.TestCase):
                         app.save_suite_draft()
                         self.assertEqual([x["id"] for x in suite_store.list_suites(db)], ["demo-suite"])
                         picker = app.query_one("#suite-list", OptionList)
+                        self.assertEqual(picker.styles.height.value, 3)
+                        self.assertTrue(app.query_one("#run-setup-empty").display)
                         picker.highlighted = 0
                         app.new_suite()
                         app.query_one("#engine-list", SelectionList).deselect_all()
