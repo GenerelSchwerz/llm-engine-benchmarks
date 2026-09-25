@@ -26,9 +26,9 @@ from source_manifest import ROOT
 from start_codex import make_prompt
 from suite_store import create_suite, show_suite, validate_suite
 from tui_data import (
-    answer_request, confirm_request, create_request, get_request, latest_request,
+    answer_request, completion_signal, confirm_request, create_request, get_request, latest_request,
     list_engines, list_models, load_state, migrate_old_files, remove_engine,
-    remove_model, request_results, resolve_request, save_engine, save_model, save_state,
+    remove_model, request_removals, request_results, resolve_request, save_engine, save_model, save_state,
 )
 
 TYPES = ("git", "package", "container", "remote", "local")
@@ -36,6 +36,27 @@ LOCATOR_LABELS = {
     "git": "Git URL", "package": "Package name", "container": "Container image",
     "remote": "Service model ID or endpoint", "local": "Executable path",
 }
+
+
+class SearchableSelectionList(SelectionList):
+    """Keep keyboard search on the picker the pointer is over."""
+
+    def on_enter(self) -> None:
+        self.focus()
+
+    def on_mouse_move(self) -> None:
+        if not self.has_focus:
+            self.focus()
+
+    def on_key(self, event) -> None:
+        if event.key in {"backspace", "escape"}:
+            self.app.change_picker_filter(self.id, event.key)
+        elif event.character and event.character.isprintable() and not event.character.isspace():
+            self.app.change_picker_filter(self.id, event.character)
+        else:
+            return
+        event.prevent_default()
+        event.stop()
 
 
 class BenchmarkApp(App[None]):
@@ -49,7 +70,8 @@ class BenchmarkApp(App[None]):
     .section-title { text-style: bold; margin-bottom: 1; }
     .field-label { color: $text-muted; }
     Input, Select { margin-bottom: 1; }
-    .picker { height: 9; border: round $primary; margin-bottom: 1; }
+    .picker { height: 17; border: round $primary; margin-bottom: 1; }
+    .picker-filter { color: $text-muted; height: 1; }
     .form { height: 1fr; }
     .buttons { height: 3; margin: 1 0; }
     Button { margin-right: 1; }
@@ -78,6 +100,11 @@ class BenchmarkApp(App[None]):
         }
         self.active_requests: set[str] = set()
         self.terminals: dict[str, tuple[str, ...]] = {}
+        self.picker_filters = {"engine": "", "model": ""}
+        self.selection_cache = {
+            "engine": set(self.state.get("engines", [])),
+            "model": set(self.state.get("models", [])),
+        }
 
     def embedded_terminal_available(self) -> bool:
         return (self.console.color_system is not None
@@ -93,7 +120,8 @@ class BenchmarkApp(App[None]):
         with TabbedContent(initial="engines"):
             with TabPane("Engines", id="engines"):
                 yield Label("Choose engines (Space toggles selection)", classes="section-title")
-                yield SelectionList(id="engine-list", classes="picker")
+                yield Static("Hover and type to filter · Backspace edits · Esc clears", id="engine-filter", classes="picker-filter")
+                yield SearchableSelectionList(id="engine-list", classes="picker")
                 with VerticalScroll(id="engine-agent", classes="agent-panel"):
                     yield Label("Tell the agent what to install", classes="section-title")
                     yield Input(id="engine-request", placeholder="Install theTom's fork from GitHub")
@@ -121,7 +149,8 @@ class BenchmarkApp(App[None]):
                 yield Button("Switch to manual setup", id="engine-mode", classes="mode-button")
             with TabPane("Models", id="models"):
                 yield Label("Choose model setups (Space toggles selection)", classes="section-title")
-                yield SelectionList(id="model-list", classes="picker")
+                yield Static("Hover and type to filter · Backspace edits · Esc clears", id="model-filter", classes="picker-filter")
+                yield SearchableSelectionList(id="model-list", classes="picker")
                 yield Static("No models saved yet.", id="model-empty")
                 with VerticalScroll(id="model-agent", classes="agent-panel"):
                     yield Label("Tell the agent what to install", classes="section-title")
@@ -184,7 +213,24 @@ class BenchmarkApp(App[None]):
         self.query_one("#messages", RichLog).write(value)
 
     def selected(self, ident: str) -> list[str]:
-        return list(self.query_one(ident, SelectionList).selected)
+        kind = "engine" if ident == "#engine-list" else "model"
+        picker = self.query_one(ident, SelectionList)
+        visible = {option.value for option in picker.options}
+        chosen = (self.selection_cache[kind] - visible) | set(picker.selected)
+        items = self.engines if kind == "engine" else self.models
+        return [item["id"] for item in items if item["id"] in chosen]
+
+    def change_picker_filter(self, picker_id: str | None, key: str) -> None:
+        if picker_id not in {"engine-list", "model-list"}:
+            return
+        kind = picker_id.split("-")[0]
+        self.selection_cache[kind] = set(self.selected(f"#{picker_id}"))
+        current = self.picker_filters[kind]
+        self.picker_filters[kind] = ("" if key == "escape" else current[:-1] if key == "backspace" else current + key)
+        label = (f"Filter: {escape(self.picker_filters[kind])}  ·  Backspace edits · Esc clears"
+                 if self.picker_filters[kind] else "Hover and type to filter · Backspace edits · Esc clears")
+        self.query_one(f"#{kind}-filter", Static).update(label)
+        (self.refresh_engines if kind == "engine" else self.refresh_models)()
 
     def remember(self) -> None:
         if self.loading:
@@ -206,10 +252,14 @@ class BenchmarkApp(App[None]):
         )
 
     def refresh_engines(self, editor_id: str | None = None) -> None:
+        previous = set(self.selected("#engine-list"))
         self.engines = list_engines()
-        previous = set(self.state.get("engines", [])) | set(self.selected("#engine-list"))
+        previous.intersection_update(x["id"] for x in self.engines)
+        self.selection_cache["engine"] = previous
+        query = self.picker_filters["engine"].casefold()
         self.query_one("#engine-list", SelectionList).set_options([
             (f"{x['label']}  ·  {x['type']}", x["id"], x["id"] in previous) for x in self.engines
+            if query in f"{x['label']} {x['id']} {x['type']} {x['locator']}".casefold()
         ])
         if editor_id:
             self.edit_engine_id = editor_id
@@ -217,11 +267,15 @@ class BenchmarkApp(App[None]):
         self.update_summary()
 
     def refresh_models(self, editor_id: str | None = None) -> None:
+        previous = set(self.selected("#model-list"))
         self.models = list_models()
-        previous = set(self.state.get("models", [])) | set(self.selected("#model-list"))
+        previous.intersection_update(x["id"] for x in self.models)
+        self.selection_cache["model"] = previous
+        query = self.picker_filters["model"].casefold()
         picker = self.query_one("#model-list", SelectionList)
         picker.set_options([
             (x["label"], x["id"], x["id"] in previous) for x in self.models
+            if query in f"{x['label']} {x['id']} {x['artifact']} {x['family']}".casefold()
         ])
         picker.display = bool(self.models)
         self.query_one("#model-empty", Static).display = not self.models
@@ -260,8 +314,14 @@ class BenchmarkApp(App[None]):
         if ident == "engine-type" and isinstance(event.value, str):
             self.query_one("#locator-label", Label).update(LOCATOR_LABELS[event.value])
 
-    def on_selection_list_selected_changed(self, _event: SelectionList.SelectedChanged) -> None:
+    def on_selection_list_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
         self.pending_delete = None
+        picker_id = event.selection_list.id
+        if picker_id in {"engine-list", "model-list"}:
+            kind = picker_id.split("-")[0]
+            picker = event.selection_list
+            visible = {option.value for option in picker.options}
+            self.selection_cache[kind] = (self.selection_cache[kind] - visible) | set(picker.selected)
         self.remember()
 
     def on_checkbox_changed(self, _event: Checkbox.Changed) -> None:
@@ -295,6 +355,20 @@ class BenchmarkApp(App[None]):
         confirm.disabled = bool(request and request["id"] in self.active_requests)
 
     def poll_requests(self) -> None:
+        for kind in ("engine", "model"):
+            request = latest_request(kind)
+            if not request or request["status"] != "pending":
+                continue
+            message = completion_signal(request["id"])
+            if message is None:
+                continue
+            try:
+                resolve_request(request["id"], "ready", message, request_results(request["id"]))
+            except (ValueError, OSError) as exc:
+                resolve_request(request["id"], "needs_input", f"Completion rejected: {exc}")
+            self.active_requests.discard(request["id"])
+            (self.refresh_engines if kind == "engine" else self.refresh_models)()
+            self.message(f"{kind.title()} request {request['id']}: {get_request(request['id'])['status']}")
         self.refresh_request("engine")
         self.refresh_request("model")
 
@@ -390,13 +464,18 @@ class BenchmarkApp(App[None]):
             if not request:
                 raise ValueError("No agent result to confirm")
             ids = confirm_request(request["id"])
-            (self.refresh_engines if kind == "engine" else self.refresh_models)()
+            removed_ids = {row["item_id"] for row in request_removals(request["id"])}
+            self.selection_cache[kind].difference_update(removed_ids)
             picker = self.query_one(f"#{kind}-list", SelectionList)
+            for removed_id in removed_ids:
+                picker.deselect(removed_id)
+            (self.refresh_engines if kind == "engine" else self.refresh_models)()
             for ident in ids:
                 picker.select(ident)
             self.remember()
             self.refresh_request(kind)
-            self.message(f"Confirmed {len(ids)} {kind} setup(s)")
+            removed = len(request_removals(request["id"]))
+            self.message(f"Confirmed {len(ids)} {kind} setup(s) and {removed} removal(s)")
             return
         if shutil.which("codex") is None:
             raise ValueError("Codex CLI is not installed or not on PATH")
@@ -413,7 +492,8 @@ class BenchmarkApp(App[None]):
         self.query_one(f"#{kind}-request", Input).value = ""
         response_instruction = (
             "In this interactive Codex terminal, ask the user directly if clarification is needed. "
-            "The program validates your attached results when you exit; do not change request status yourself. "
+            "The program polls your finish-request signal and validates the recorded changes; "
+            "do not change request status yourself. "
             if self.embedded_terminal_available() else
             "Return final JSON matching manifests/setup-response.schema.json: status ready with every "
             "saved result ID and a concise verification message, or status needs_input with specific "
@@ -423,10 +503,18 @@ class BenchmarkApp(App[None]):
         prompt = (
             f"Handle local benchmark {kind} setup request {ident}. Read AGENTS.md and "
             f"'uv run scripts/catalog_cli.py show-request {ident}'. The user's request may "
-            "name several items. Find authoritative sources; do not guess if a name is "
-            "ambiguous. Install or locate them, verify their identities and "
-            f"local paths, then save each through catalog_cli.py add-engine/add-model --request-id {ident}. "
-            f"For an existing saved result use catalog_cli.py attach-result {ident} RESULT_ID. "
+            "name several items. List catalog entries first. If an item is already installed, verify it "
+            f"and use catalog_cli.py use-existing {ident} ITEM_ID; do not reinstall. "
+            f"To register a local install use add-{kind} --request-id {ident}. "
+            f"To update a saved item use update-{kind} ITEM_ID --request-id {ident}; "
+            f"to remove one use remove-{kind} ITEM_ID --request-id {ident}. "
+            f"After every requested item is handled, run catalog_cli.py finish-request {ident} "
+            "--message 'Concise verification summary'. The TUI polls and validates this signal while "
+            "your terminal remains open. "
+            "Only delete files when the user's request specifically asks to uninstall them, "
+            "using --delete-install --confirm-path with the exact saved path. "
+            "Find authoritative sources; do not guess ambiguous names. Verify identities, local paths, "
+            "and versions before recording success. "
             "Check every command exit status. " + response_instruction +
             "Do not start benchmark measurements."
         )
@@ -541,6 +629,10 @@ class BenchmarkApp(App[None]):
 
     def finish_setup_agent(self, kind: str, ident: str, log_id: str,
                            code: int, response: dict | None) -> None:
+        if get_request(ident)["status"] in {"ready", "confirmed"}:
+            self.active_requests.discard(ident)
+            self.refresh_request(kind)
+            return
         try:
             if code == 0 and isinstance(response, dict):
                 resolve_request(
@@ -555,6 +647,7 @@ class BenchmarkApp(App[None]):
             resolve_request(ident, "needs_input",
                             f"Agent result was rejected: {exc}. Review its output and provide corrected details.")
         self.active_requests.discard(ident)
+        (self.refresh_engines if kind == "engine" else self.refresh_models)()
         self.refresh_request(kind)
         status = get_request(ident)["status"]
         if code:
@@ -638,16 +731,22 @@ class BenchmarkApp(App[None]):
                 self.message(f"Run agent exited with status {event.exit_code}; review its results")
             return
         _, kind, ident = info
+        if get_request(ident)["status"] in {"ready", "confirmed"}:
+            self.active_requests.discard(ident)
+            self.refresh_request(kind)
+            return
         ids = request_results(ident)
+        removals = request_removals(ident)
         try:
-            if event.exit_code == 0 and ids:
-                resolve_request(ident, "ready", f"Verified {len(ids)} saved {kind} setup(s)", ids)
+            if event.exit_code == 0 and (ids or removals):
+                resolve_request(ident, "ready", f"Verified {len(ids)} saved {kind} setup(s) and {len(removals)} removal(s)", ids)
             else:
-                reason = "No results were attached" if not ids else f"agent exit status {event.exit_code}"
+                reason = "No results were recorded" if not ids and not removals else f"agent exit status {event.exit_code}"
                 resolve_request(ident, "needs_input", f"{reason}. Review the terminal and retry or provide a correction.")
         except (ValueError, OSError) as exc:
             resolve_request(ident, "needs_input", f"Agent result was rejected: {exc}. Correct it and retry.")
         self.active_requests.discard(ident)
+        (self.refresh_engines if kind == "engine" else self.refresh_models)()
         self.refresh_request(kind)
         self.message(f"{kind.title()} request {ident}: {get_request(ident)['status']}")
 
