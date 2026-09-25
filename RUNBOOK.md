@@ -70,6 +70,10 @@ Create an immutable result directory per engine/model/method/configuration/repet
 
 Compare within a hardware/OS cohort and stated memory envelope. Report prefill, decode, TTFT, and completion wall time separately, with median and spread across repeats. Retain individual results. Label unmatched artifacts, quantization, model lineage, failed output, unsupported modes, and adapter overhead. A faster row with worse output or missing optimization evidence is not a headline win.
 
+### Review local results
+
+Open **Results** in the TUI to select a run, pull its saved findings, or start an interactive Codex review. The index includes older directories under `results/SUITE/RUN/` even when SQLite has no matching run record. For command-line review, use `uv run scripts/results_store.py list`, `show SUITE/RUN`, and `pull-findings SUITE/RUN`. The qualified benchmark summary takes precedence over interim run summaries. To retain reviewed conclusions, submit a JSON file containing `summary`, `highlights`, `limitations`, and run-relative `artifacts` with `uv run scripts/results_store.py record-findings SUITE/RUN FILE.json`. The command rejects invalid paths and records; the resulting `findings.json` stays in the ignored run directory. Review is separate from measurement and publication.
+
 ## Publication
 
 The runner proposes a qualified table with raw artifact references. The coordinator checks arithmetic and limitations, then updates the designated report or wiki only when publication is requested. Fetch current content first, preserve existing edits and dated tables, state exact versions/hashes/hardware/methods, and verify the published rendering and links.

@@ -23,13 +23,14 @@ uv run llama-benchy --version
 uv run scripts/tui.py
 ```
 
-The minimal terminal UI has four tabs:
+The minimal terminal UI has five tabs:
 
 | Tab | What you do |
 | --- | --- |
 | **Engines** | Ask an agent to find and install a fork in one sentence, toggle to a manual locator form, or build selected Git engines. |
 | **Models** | Ask an agent to find or install one or several models, or toggle to a manual locator form. |
 | **Suite** | Save and prepare a suite, then save, edit, or clone run setups before launching measurements. |
+| **Results** | Browse local runs, pull saved findings, and discuss a selected run with Codex. |
 | **Agents** | Use Codex inside a separate terminal pane for each running agent. Monochrome terminals show a readable event log instead. |
 
 Use **Tab** to move between controls and **Space** or left-click to toggle a selection. Hover over either picker and type to filter; **Backspace** edits the filter and **Esc** clears it. Hidden selections stay selected. Right-click a saved engine or model to edit it; **Esc** returns the form to Add mode. The setup mode button is at the bottom of each tab. In Agent mode, describe what you want and open **Agents**. Color terminals embed the interactive Codex TUI; press **Ctrl+G** to leave its pane. With tmux installed, the mouse wheel scrolls the private session's history; press **q** to return to Codex. Without tmux, use the **Transcript** button. Monochrome terminals and sessions with `NO_COLOR` use a readable background event log. The program validates saved results when Codex exits. A confident result appears as **ready** and waits for **Confirm result**; an ambiguous request appears as **needs_input** and waits for **Answer & retry**. Closing Codex before it completes marks the setup **canceled** or **failed**, and **Retry agent** starts a fresh request. **Clear status** hides completed setup notices without deleting their history. You can switch to Manual mode at any time.
@@ -39,6 +40,8 @@ Use **Tab** to move between controls and **Space** or left-click to toggle a sel
 The Suite tab lists names, status, counts, and preparation state. **New** clears the name field; **Save draft** creates its SQLite record from the current selections. **Open** restores a saved plan and its selections. **Delete** requires a second click and removes only the suite record and plan; engine installs, model files, and benchmark artifacts stay in place. Frozen plans cannot be edited; create another suite to change one.
 
 Under **Run setups**, enter an optional VRAM ceiling in GiB and a description with instructions for the agent. Save a setup to reuse it, edit its description at any time, or **Clone** it to try a small change such as 8 GiB versus 12 GiB. **Run frozen plan** creates a new run ID and freezes a copy of the setup for that launch; later edits do not change past runs. An empty setup launches with no added ceiling or instructions. The agent can reread the saved copy with `uv run scripts/run_store.py show-run RUN_ID`. Each run gets its own `results/SUITE/RUN_ID/` directory. The VRAM number is a ceiling, not a request to fill VRAM exactly.
+
+The **Results** tab includes older local result directories even if they lack a run registry entry. Select a run and choose **Pull findings** for a concise view of its final saved summary. **Talk to Codex** opens an interactive review in Agents; enter an optional first question. Codex can save reviewed findings through the validated `results_store.py record-findings` command, then **Pull findings** shows that record. Raw results and findings stay local under ignored `results/`. Color terminals support interactive chat; monochrome mode provides a one-shot review log.
 
 The agent checks the catalog before installing. You can ask it to use an existing install, update an engine or model, or remove one. It signals completion through the validated CLI, so the result can become ready while its interactive terminal stays open. Removing a custom catalog entry leaves its files in place unless you explicitly ask to uninstall them. Built-in engine definitions stay available; uninstalling one removes its local checkout. See the [agent instructions](AGENTS.md) for the validated commands.
 

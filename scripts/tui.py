@@ -28,6 +28,7 @@ from textual_tty import Terminal
 
 from source_manifest import ROOT
 from run_store import clone_setup, create_run, delete_setup, list_setups, save_setup, show_setup
+from results_store import list_results, pull_findings, show_result
 from start_codex import make_prompt
 from suite_store import create_suite, delete_suite, list_suites, preparation_signal, show_suite, validate_suite
 from tui_data import (
@@ -182,6 +183,9 @@ class BenchmarkApp(App[None]):
     .request-status { margin: 1 0; }
     .mode-button { dock: bottom; height: 3; margin: 1 0 0 0; }
     #agent-tabs { height: 1fr; }
+    #result-list { height: 11; border: round $primary; margin-bottom: 1; }
+    #result-detail { min-height: 3; margin-bottom: 1; }
+    #result-findings { height: 1fr; border: round $primary; }
     """
 
     def __init__(self) -> None:
@@ -205,6 +209,7 @@ class BenchmarkApp(App[None]):
         self.active_requests: set[str] = set()
         self.active_builds: set[str] = set()
         self.terminals: dict[str, tuple[str, ...]] = {}
+        self.result_rows: list[dict] = []
         self.tmux_sockets: dict[str, tuple[str, str]] = {}
         self.tmux_missing: dict[str, int] = {}
         self.announced_preparations: set[str] = set()
@@ -440,6 +445,16 @@ class BenchmarkApp(App[None]):
                         yield Button("Save setup", id="run-setup-save", variant="success")
                         yield Button("Run frozen plan", id="run", variant="primary")
                     yield Static("Edit a saved setup freely. Each launch keeps an immutable copy of its instructions.")
+            with TabPane("Results", id="results"):
+                yield Label("Local runs", classes="section-title")
+                yield OptionList(id="result-list")
+                with Horizontal(classes="buttons"):
+                    yield Button("Refresh runs", id="result-refresh")
+                    yield Button("Pull findings", id="result-pull", variant="primary")
+                    yield Button("Talk to Codex", id="result-talk", variant="success")
+                yield Static("Select a run to review.", id="result-detail")
+                yield Input(id="result-question", placeholder="Optional first question for Codex")
+                yield RichLog(id="result-findings", highlight=True, markup=True, wrap=True)
             with TabPane("Agents", id="agents"):
                 with TabbedContent(id="agent-tabs"):
                     with TabPane("Overview", id="agent-overview"):
@@ -454,6 +469,7 @@ class BenchmarkApp(App[None]):
         self.refresh_suites()
         self.query_one("#suite-id", Input).value = self.state.get("suite_id", "")
         self.refresh_run_setups()
+        self.refresh_results()
         if self.run_setup_id and any(row["id"] == self.run_setup_id for row in self.run_setup_rows):
             self.open_run_setup()
         self.query_one("#check-updates", Checkbox).value = bool(self.state.get("check_updates", False))
@@ -549,12 +565,131 @@ class BenchmarkApp(App[None]):
             self.show_suite_detail()
         elif event.option_list.id == "run-setup-list":
             self.pending_run_setup_delete = None
+        elif event.option_list.id == "result-list":
+            self.show_result_detail()
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         if event.option_list.id == "suite-list":
             self.open_suite()
         elif event.option_list.id == "run-setup-list":
             self.open_run_setup()
+        elif event.option_list.id == "result-list":
+            self.show_result_detail()
+
+    def highlighted_result(self) -> str | None:
+        index = self.query_one("#result-list", OptionList).highlighted
+        return (self.result_rows[index]["key"] if index is not None and index < len(self.result_rows)
+                else None)
+
+    def refresh_results(self) -> None:
+        selected = self.highlighted_result() if self.result_rows else None
+        self.result_rows = list_results()
+        picker = self.query_one("#result-list", OptionList)
+        picker.clear_options()
+        for row in self.result_rows:
+            picker.add_option(f"{row['key']}  ·  {row['status']}")
+        if self.result_rows:
+            picker.highlighted = next((i for i, row in enumerate(self.result_rows)
+                                       if row["key"] == selected), 0)
+        self.show_result_detail()
+
+    def show_result_detail(self) -> None:
+        key = self.highlighted_result()
+        detail = self.query_one("#result-detail", Static)
+        if not key:
+            detail.update("No local runs found yet.")
+            return
+        try:
+            result = show_result(key)
+            detail.update(f"{key}\n{result['directory']}\n"
+                          f"Summary: {result['summary_file'] or 'not saved yet'} · "
+                          f"Reviewed findings: {'saved' if result['findings_saved'] else 'not saved'}")
+        except (ValueError, OSError) as exc:
+            detail.update(f"Could not read run: {exc}")
+
+    def show_findings(self) -> None:
+        key = self.highlighted_result()
+        if not key:
+            raise ValueError("Select a run first")
+        data = pull_findings(key)
+        log = self.query_one("#result-findings", RichLog)
+        log.clear()
+        log.write(f"[bold cyan]{escape(key)}[/bold cyan] · {escape(data['source'])}")
+        log.write(escape(data["summary"]))
+        for item in data["highlights"]:
+            log.write(f"[green]•[/green] {escape(item)}")
+        for item in data["limitations"]:
+            log.write(f"[yellow]Limit:[/yellow] {escape(item)}")
+        for item in data["artifacts"]:
+            log.write(f"[dim]Source: {escape(item)}[/dim]")
+
+    async def start_results_agent(self, key: str, question: str) -> None:
+        tabs = self.query_one("#agent-tabs", TabbedContent)
+        active = next((ident for ident, info in self.terminals.items()
+                       if info == ("results", key)), None)
+        if active:
+            for pane in tabs.query(TabPane):
+                if pane.query(f"#{active}"):
+                    tabs.active = pane.id
+                    self.query_one("#main-tabs", TabbedContent).active = "agents"
+                    self.query_one(f"#{active}").focus()
+                    return
+        prompt = (
+            f"Discuss the benchmark results for {key}. Read AGENTS.md and RUNBOOK.md, then "
+            f"run `uv run scripts/results_store.py show {key}` and "
+            f"`uv run scripts/results_store.py pull-findings {key}`. Inspect raw evidence when needed. "
+            "Be interactive and answer the user's questions. Cite paths inside this run for each finding. "
+            "Distinguish observational throughput from quality-matched comparisons, and state output "
+            "or token-count limits. Do not rerun benchmarks or publish anything. When the user asks "
+            "you to save findings, write JSON with summary, highlights, limitations, and relative "
+            "artifact paths, then submit it through `uv run scripts/results_store.py record-findings "
+            f"{key} PATH_TO_JSON`; check the exit status. "
+            + (f"Start by answering: {question}" if question else "Start with a concise review of this run.")
+        )
+        pane_id = f"result-agent-{uuid.uuid4().hex[:12]}"
+        if self.embedded_terminal_available():
+            terminal_id = f"result-terminal-{uuid.uuid4().hex[:12]}"
+            command, socket = embedded_codex_command(prompt)
+            terminal = CodexTerminal(command=command, id=terminal_id)
+            terminal.tmux_mode = socket is not None
+            toolbar = (Static("Mouse wheel: scroll history · q: return to Codex") if socket else
+                       Button("Transcript / scroll history (Ctrl+T)", id=f"transcript-{terminal_id}"))
+            self.terminals[terminal_id] = ("results", key)
+            if socket:
+                self.tmux_sockets[terminal_id] = (command[0], socket)
+            await tabs.add_pane(TabPane(f"results: {key}", toolbar, terminal, id=pane_id))
+            tabs.active = pane_id
+            self.query_one("#main-tabs", TabbedContent).active = "agents"
+            terminal.focus()
+        else:
+            log_id = f"result-log-{uuid.uuid4().hex[:12]}"
+            await tabs.add_pane(TabPane(f"results: {key}",
+                                        RichLog(id=log_id, highlight=True, markup=True, max_lines=500,
+                                                wrap=True), id=pane_id))
+            tabs.active = pane_id
+            self.query_one("#main-tabs", TabbedContent).active = "agents"
+            self.append_agent_log(log_id, "[yellow]Monochrome mode shows a one-shot review. Use a color terminal for interactive chat.[/yellow]")
+            self.run_results_agent(key, prompt, log_id)
+
+    @work(thread=True)
+    def run_results_agent(self, key: str, prompt: str, log_id: str) -> None:
+        try:
+            process = subprocess.Popen(["codex", "exec", "--json", "-C", str(ROOT), prompt],
+                                       cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                       text=True, bufsize=1)
+            assert process.stdout is not None
+            for line in process.stdout:
+                formatted = self.format_agent_event(line)
+                if formatted:
+                    self.call_from_thread(self.append_agent_log, log_id, formatted)
+            self.call_from_thread(self.finish_results_agent, key, process.wait())
+        except OSError as exc:
+            self.call_from_thread(self.append_agent_log, log_id, f"[red]{escape(str(exc))}[/red]")
+            self.call_from_thread(self.finish_results_agent, key, 1)
+
+    def finish_results_agent(self, key: str, exit_code: int) -> None:
+        self.refresh_results()
+        self.message(f"Results agent for {key} exited ({exit_code}); Pull findings to refresh the review")
 
     def open_suite(self) -> None:
         ident = self.highlighted_suite()
@@ -919,6 +1054,16 @@ class BenchmarkApp(App[None]):
                 self.message(f"Cleared {count} completed {kind} setup notice(s)")
             elif action == "engine-build":
                 self.launch_builds()
+            elif action == "result-refresh":
+                self.refresh_results()
+            elif action == "result-pull":
+                self.show_findings()
+            elif action == "result-talk":
+                key = self.highlighted_result()
+                if not key:
+                    raise ValueError("Select a run first")
+                self.run_worker(self.start_results_agent(key, self.value("result-question")),
+                                name=f"results-{key.replace('/', '-')}")
             elif action in {"prepare", "run"}:
                 self.launch_agent(action)
             elif action == "suite-new":
@@ -1470,6 +1615,9 @@ class BenchmarkApp(App[None]):
             return
         if info[0] == "run":
             self.finish_stored_agent(info[1], exit_code)
+            return
+        if info[0] == "results":
+            self.finish_results_agent(info[1], exit_code)
             return
         _, kind, ident = info
         if get_request(ident)["status"] != "pending":
