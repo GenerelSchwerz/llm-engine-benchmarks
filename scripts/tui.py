@@ -29,7 +29,7 @@ from source_manifest import ROOT
 from start_codex import make_prompt
 from suite_store import create_suite, delete_suite, list_suites, preparation_signal, show_suite, validate_suite
 from tui_data import (
-    answer_request, completion_signal, confirm_request, create_request, get_request, latest_request,
+    answer_request, completion_signal, confirm_request, create_request, dismiss_requests, get_request, latest_request,
     list_engines, list_models, load_state, migrate_old_files, remove_engine,
     remove_model, request_removals, request_results, resolve_request, save_engine, save_model, save_state,
     update_builtin_engine,
@@ -65,7 +65,7 @@ class SearchableSelectionList(SelectionList):
         event.prevent_default()
         event.stop()
 
-    async def _on_click(self, event) -> None:
+    def _on_click(self, event) -> None:
         if event.button == 3:
             index = event.style.meta.get("option") if event.style else None
             if index is not None:
@@ -74,7 +74,6 @@ class SearchableSelectionList(SelectionList):
             event.stop()
             event.prevent_default()
             return
-        await super()._on_click(event)
 
 
 class CodexTerminal(Terminal):
@@ -320,6 +319,7 @@ class BenchmarkApp(App[None]):
                     with Horizontal(classes="buttons"):
                         yield Button("Ask agent", id="engine-ask", variant="primary")
                         yield Button("Confirm result", id="engine-confirm", variant="success")
+                        yield Button("Clear status", id="engine-clear")
                     yield Static(id="engine-agent-status", classes="request-status")
                 with VerticalScroll(id="engine-manual", classes="form"):
                     yield Label("Add an engine", id="engine-editor-title", classes="section-title")
@@ -354,6 +354,7 @@ class BenchmarkApp(App[None]):
                     with Horizontal(classes="buttons"):
                         yield Button("Ask agent", id="model-ask", variant="primary")
                         yield Button("Confirm result", id="model-confirm", variant="success")
+                        yield Button("Clear status", id="model-clear")
                     yield Static(id="model-agent-status", classes="request-status")
                 with VerticalScroll(id="model-manual", classes="form"):
                     yield Label("Add a model", id="model-editor-title", classes="section-title")
@@ -662,6 +663,8 @@ class BenchmarkApp(App[None]):
         confirm = self.query_one(f"#{kind}-confirm", Button)
         confirm.display = bool(request and request["status"] == "ready")
         confirm.disabled = bool(request and request["id"] in self.active_requests)
+        clear = self.query_one(f"#{kind}-clear", Button)
+        clear.display = bool(request and request["status"] != "pending")
 
     def poll_requests(self) -> None:
         self.poll_tmux_sessions()
@@ -757,6 +760,11 @@ class BenchmarkApp(App[None]):
             elif action and action.endswith(("-ask", "-confirm")):
                 kind, request_action = action.split("-")
                 self.handle_request(kind, request_action)
+            elif action in {"engine-clear", "model-clear"}:
+                kind = action.split("-")[0]
+                count = dismiss_requests(kind)
+                self.refresh_request(kind)
+                self.message(f"Cleared {count} completed {kind} setup notice(s)")
             elif action in {"prepare", "run"}:
                 self.launch_agent(action)
             elif action == "suite-new":

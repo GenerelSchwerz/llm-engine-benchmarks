@@ -44,7 +44,8 @@ def connect(path: Path = DB) -> Iterator[sqlite3.Connection]:
             prompt TEXT NOT NULL, status TEXT NOT NULL
                 CHECK(status IN ('pending','needs_input','ready','confirmed','canceled','failed')),
             message TEXT NOT NULL DEFAULT '', result_ids TEXT NOT NULL DEFAULT '[]',
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            dismissed INTEGER NOT NULL DEFAULT 0 CHECK(dismissed IN (0,1))
         );
         CREATE TABLE IF NOT EXISTS request_results (
             request_id TEXT NOT NULL REFERENCES requests(id),
@@ -85,6 +86,8 @@ def connect(path: Path = DB) -> Iterator[sqlite3.Connection]:
         db.execute("INSERT INTO requests_new SELECT * FROM requests")
         db.execute("DROP TABLE requests")
         db.execute("ALTER TABLE requests_new RENAME TO requests")
+    if "dismissed" not in {row["name"] for row in db.execute("PRAGMA table_info(requests)")}:
+        db.execute("ALTER TABLE requests ADD COLUMN dismissed INTEGER NOT NULL DEFAULT 0")
     try:
         yield db
         db.commit()
@@ -371,9 +374,18 @@ def remove_for_request(kind: str, item_id: str, request_id: str,
 
 def latest_request(kind: str, path: Path = DB) -> dict | None:
     with connect(path) as db:
-        row = db.execute("SELECT id FROM requests WHERE kind=? ORDER BY updated_at DESC, rowid DESC LIMIT 1",
+        row = db.execute("SELECT id FROM requests WHERE kind=? AND dismissed=0 ORDER BY updated_at DESC, rowid DESC LIMIT 1",
                          (kind,)).fetchone()
     return get_request(row["id"], path) if row else None
+
+
+def dismiss_requests(kind: str, path: Path = DB) -> int:
+    if kind not in {"engine", "model"}:
+        raise ValueError("Unknown setup kind")
+    with connect(path) as db:
+        result = db.execute("UPDATE requests SET dismissed=1 WHERE kind=? AND status!='pending' AND dismissed=0",
+                            (kind,))
+        return result.rowcount
 
 
 def resolve_request(ident: str, status: str, message: str,

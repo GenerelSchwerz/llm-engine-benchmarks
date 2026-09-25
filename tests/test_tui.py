@@ -336,6 +336,42 @@ class SetupTest(unittest.TestCase):
             tui_data.resolve_request("old", "canceled", "Closed by user", path=db)
             self.assertEqual(tui_data.get_request("old", db)["status"], "canceled")
 
+    def test_clear_status_hides_completed_model_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            db = Path(temp) / "catalog.sqlite3"
+            earlier = tui_data.create_request("model", "Find A", db)
+            tui_data.resolve_request(earlier, "needs_input", "Which quant?", path=db)
+            recent = tui_data.create_request("model", "Find B", db)
+            tui_data.resolve_request(recent, "failed", "Agent exited", path=db)
+            patches = [
+                patch.object(tui, "migrate_old_files", lambda: None),
+                patch.object(tui, "list_engines", lambda: tui_data.list_engines(db)),
+                patch.object(tui, "list_models", lambda: tui_data.list_models(db)),
+                patch.object(tui, "load_state", lambda: tui_data.load_state(db)),
+                patch.object(tui, "save_state", lambda state: tui_data.save_state(state, db)),
+                patch.object(tui, "latest_request", lambda kind: tui_data.latest_request(kind, db)),
+                patch.object(tui, "dismiss_requests", lambda kind: tui_data.dismiss_requests(kind, db)),
+            ]
+            for item in patches:
+                item.start()
+            try:
+                async def exercise():
+                    app = tui.BenchmarkApp()
+                    async with app.run_test(size=(100, 40)) as pilot:
+                        app.query(TabbedContent).first().active = "models"
+                        await pilot.pause()
+                        self.assertTrue(app.query_one("#model-clear").display)
+                        await pilot.click("#model-clear")
+                        self.assertIsNone(tui_data.latest_request("model", db))
+                        self.assertIn("Describe what you want", str(app.query_one("#model-agent-status").content))
+
+                asyncio.run(exercise())
+                self.assertEqual(tui_data.get_request(recent, db)["status"], "failed")
+                self.assertEqual(tui_data.get_request(earlier, db)["status"], "needs_input")
+            finally:
+                for item in reversed(patches):
+                    item.stop()
+
     @unittest.skipUnless(shutil.which("tmux") and hasattr(os, "getuid"), "tmux is optional")
     def test_tmux_wheel_scrolls_history_and_teardown_is_isolated(self) -> None:
         tmux = shutil.which("tmux")
@@ -613,6 +649,46 @@ class SetupTest(unittest.TestCase):
                         self.assertNotIn("leloch-v1", app.selected("#engine-list"))
                         app.action_clear_edit()
                         self.assertIsNone(app.edit_engine_id)
+
+                asyncio.run(exercise())
+            finally:
+                for item in reversed(patches):
+                    item.stop()
+
+    def test_left_click_toggles_engine_and_model_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            db = Path(temp) / "catalog.sqlite3"
+            model = tui_data.save_model({"artifact": "/tmp/demo.gguf", "label": "Demo"}, db)
+            patches = [
+                patch.object(tui, "migrate_old_files", lambda: None),
+                patch.object(tui, "list_engines", lambda: tui_data.list_engines(db)),
+                patch.object(tui, "list_models", lambda: tui_data.list_models(db)),
+                patch.object(tui, "load_state", lambda: tui_data.load_state(db)),
+                patch.object(tui, "save_state", lambda state: tui_data.save_state(state, db)),
+                patch.object(tui, "latest_request", lambda kind: tui_data.latest_request(kind, db)),
+            ]
+            for item in patches:
+                item.start()
+            try:
+                async def exercise():
+                    app = tui.BenchmarkApp()
+                    async with app.run_test(size=(100, 40)) as pilot:
+                        picker = app.query_one("#engine-list", SelectionList)
+                        ident = picker.get_option_at_index(1).value
+                        self.assertNotIn(ident, app.selected("#engine-list"))
+                        await pilot.click("#engine-list", offset=(5, 2), button=1)
+                        self.assertIn(ident, app.selected("#engine-list"))
+                        await pilot.click("#engine-list", offset=(5, 2), button=1)
+                        self.assertNotIn(ident, app.selected("#engine-list"))
+
+                    app = tui.BenchmarkApp()
+                    async with app.run_test(size=(100, 40)) as pilot:
+                        app.query(TabbedContent).first().active = "models"
+                        await pilot.pause()
+                        await pilot.click("#model-list", offset=(5, 1), button=1)
+                        self.assertIn(model, app.selected("#model-list"))
+                        await pilot.click("#model-list", offset=(5, 1), button=1)
+                        self.assertNotIn(model, app.selected("#model-list"))
 
                 asyncio.run(exercise())
             finally:
