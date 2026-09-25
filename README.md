@@ -27,12 +27,14 @@ The minimal terminal UI has four tabs:
 
 | Tab | What you do |
 | --- | --- |
-| **Engines** | Ask an agent to find and install a fork in one sentence, or toggle to a manual locator form. |
+| **Engines** | Ask an agent to find and install a fork in one sentence, toggle to a manual locator form, or build selected Git engines. |
 | **Models** | Ask an agent to find or install one or several models, or toggle to a manual locator form. |
 | **Suite** | Save a draft, open an existing suite, or delete its catalog plan. Prepare a reviewed plan, then run it. |
 | **Agents** | Use Codex inside a separate terminal pane for each running agent. Monochrome terminals show a readable event log instead. |
 
 Use **Tab** to move between controls and **Space** or left-click to toggle a selection. Hover over either picker and type to filter; **Backspace** edits the filter and **Esc** clears it. Hidden selections stay selected. Right-click a saved engine or model to edit it; **Esc** returns the form to Add mode. The setup mode button is at the bottom of each tab. In Agent mode, describe what you want and open **Agents**. Color terminals embed the interactive Codex TUI; press **Ctrl+G** to leave its pane. With tmux installed, the mouse wheel scrolls the private session's history; press **q** to return to Codex. Without tmux, use the **Transcript** button. Monochrome terminals and sessions with `NO_COLOR` use a readable background event log. The program validates saved results when Codex exits. A confident result appears as **ready** and waits for **Confirm result**; an ambiguous request appears as **needs_input** and waits for **Answer & retry**. Closing Codex before it completes marks the setup **canceled** or **failed**, and **Retry agent** starts a fresh request. **Clear status** hides completed setup notices without deleting their history. You can switch to Manual mode at any time.
+
+**Build selected** launches one Codex agent per selected Git engine, each in its own Agents pane. The agents use the saved checkout or install the recorded source, follow that engine's build guide, and verify the resulting executable. Non-Git engines are skipped. Build output is shown in each pane; an agent's exit code alone does not confirm a successful build. Close an active suite run before building on the same machine.
 
 The Suite tab lists names, status, counts, and preparation state. **New** clears the name field; **Save draft** creates its SQLite record from the current selections. **Open** restores a saved plan and its selections. **Delete** requires a second click and removes only the suite record and plan; engine installs, model files, and benchmark artifacts stay in place. Frozen plans cannot be edited; create another suite to change one.
 

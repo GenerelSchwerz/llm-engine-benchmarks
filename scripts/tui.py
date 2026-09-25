@@ -129,6 +129,26 @@ def embedded_codex_command(prompt: str) -> tuple[list[str], str | None]:
     return codex, None
 
 
+def make_build_prompt(engine: dict) -> str:
+    """Give one agent ownership of one selected Git engine's build."""
+    return (
+        f"Build the selected Git engine {engine['id']!r} ({engine['locator']}). "
+        f"The catalog records revision {engine['revision'] or 'not yet pinned'} and "
+        f"installed path {engine['installed_path'] or 'not yet recorded'}. "
+        "Read AGENTS.md, the matching guide in guides/, and the engine's own build instructions. "
+        "Use the catalog's installed checkout if present; otherwise install the recorded source "
+        "at its pinned revision. For a custom source without an exact revision, resolve its revision "
+        "and report it before building. Do not modify another engine's checkout or update a pin "
+        "silently. Verify the checkout HEAD and working tree before changing anything. "
+        "Build in this engine's own checkout using the backend appropriate to this machine. "
+        "Avoid exhausting the machine with unrestricted parallel compilation. "
+        "Check every command exit status and verify the built executable or service with its "
+        "version or help command. Do not load models, run benchmarks, or publish results. "
+        "Report the source revision, build command, build output path, verification command, "
+        "and any failure or missing prerequisite. If a build cannot be verified, say so explicitly."
+    )
+
+
 class BenchmarkApp(App[None]):
     TITLE = "LLM Benchmarks"
     SUB_TITLE = "engines · models · suite"
@@ -176,6 +196,7 @@ class BenchmarkApp(App[None]):
             "model": self.state.get("model_mode", "agent"),
         }
         self.active_requests: set[str] = set()
+        self.active_builds: set[str] = set()
         self.terminals: dict[str, tuple[str, ...]] = {}
         self.tmux_sockets: dict[str, tuple[str, str]] = {}
         self.tmux_missing: dict[str, int] = {}
@@ -308,11 +329,12 @@ class BenchmarkApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with TabbedContent(initial="engines"):
+        with TabbedContent(initial="engines", id="main-tabs"):
             with TabPane("Engines", id="engines"):
                 yield Label("Choose engines (Space toggles selection)", classes="section-title")
                 yield Static("Hover and type to filter · Backspace edits · Esc clears", id="engine-filter", classes="picker-filter")
                 yield SearchableSelectionList(id="engine-list", classes="picker")
+                yield Button("Build selected", id="engine-build", variant="primary")
                 with VerticalScroll(id="engine-agent", classes="agent-panel"):
                     yield Label("Tell the agent what to install", classes="section-title")
                     yield Input(id="engine-request", placeholder="Install theTom's fork from GitHub")
@@ -765,6 +787,8 @@ class BenchmarkApp(App[None]):
                 count = dismiss_requests(kind)
                 self.refresh_request(kind)
                 self.message(f"Cleared {count} completed {kind} setup notice(s)")
+            elif action == "engine-build":
+                self.launch_builds()
             elif action in {"prepare", "run"}:
                 self.launch_agent(action)
             elif action == "suite-new":
@@ -899,6 +923,92 @@ class BenchmarkApp(App[None]):
         self.active_requests.add(ident)
         self.refresh_request(kind)
         self.run_worker(self.start_agent_tab(kind, ident, prompt), name=f"setup-{ident}")
+
+    def launch_builds(self) -> None:
+        if shutil.which("codex") is None:
+            raise ValueError("Codex CLI is not installed or not on PATH")
+        selected = set(self.selected("#engine-list"))
+        if not selected:
+            raise ValueError("Select at least one Git engine to build")
+        engines = [item for item in self.engines if item["id"] in selected and item["type"] == "git"]
+        skipped = sorted(selected - {item["id"] for item in engines})
+        pending = [item for item in engines if item["id"] not in self.active_builds]
+        if not pending:
+            raise ValueError("No selected Git engines to start; non-Git engines cannot be built and active builds are already running")
+        if any(info[0] == "suite" and info[1] == "run" for info in self.terminals.values()):
+            raise ValueError("Close the active suite run before starting builds on this machine")
+        self.query_one("#main-tabs", TabbedContent).active = "agents"
+        for item in pending:
+            self.active_builds.add(item["id"])
+            self.run_worker(self.start_build_tab(item), name=f"build-{item['id']}")
+        self.message(f"Started {len(pending)} build agent(s) in Agents: "
+                     f"{', '.join(item['id'] for item in pending)}")
+        if skipped:
+            self.message(f"Skipped non-Git engines (no repository to build): {', '.join(skipped)}")
+
+    async def start_build_tab(self, engine: dict) -> None:
+        ident = engine["id"]
+        key = uuid.uuid5(uuid.NAMESPACE_URL, ident).hex[:12]
+        pane_id = f"build-agent-{key}"
+        log_id = f"build-log-{key}"
+        terminal_id = f"build-terminal-{uuid.uuid4().hex[:12]}"
+        status_id = f"build-status-{key}"
+        tabs = self.query_one("#agent-tabs", TabbedContent)
+        try:
+            if self.query(f"#{pane_id}"):
+                await tabs.remove_pane(pane_id)
+            prompt = make_build_prompt(engine)
+            if self.embedded_terminal_available():
+                command, socket = embedded_codex_command(prompt)
+                terminal = CodexTerminal(command=command, id=terminal_id)
+                terminal.tmux_mode = socket is not None
+                toolbar = (Static("Mouse wheel: scroll history · q: return to Codex") if socket else
+                           Button("Transcript / scroll history (Ctrl+T)", id=f"transcript-{terminal_id}"))
+                self.terminals[terminal_id] = ("build", ident)
+                if socket:
+                    self.tmux_sockets[terminal_id] = (command[0], socket)
+                await tabs.add_pane(TabPane(
+                    f"build: {ident}", Static("Building…", id=status_id), toolbar, terminal, id=pane_id,
+                ))
+                tabs.active = pane_id
+                self.query_one(f"#{terminal_id}").focus()
+            else:
+                await tabs.add_pane(TabPane(
+                    f"build: {ident}", Static("Building…", id=status_id),
+                    RichLog(id=log_id, highlight=True, markup=True, max_lines=500, wrap=True), id=pane_id,
+                ))
+                tabs.active = pane_id
+                self.run_build_agent(ident, prompt, log_id)
+        except Exception as exc:
+            self.active_builds.discard(ident)
+            self.cleanup_tmux(terminal_id)
+            self.terminals.pop(terminal_id, None)
+            self.message(f"[red]Could not start build agent for {escape(ident)}: {escape(str(exc))}[/red]")
+
+    @work(thread=True)
+    def run_build_agent(self, ident: str, prompt: str, log_id: str) -> None:
+        try:
+            process = subprocess.Popen(
+                ["codex", "exec", "--json", "-C", str(ROOT), prompt],
+                cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+            )
+            assert process.stdout is not None
+            for line in process.stdout:
+                formatted = self.format_agent_event(line)
+                if formatted:
+                    self.call_from_thread(self.append_agent_log, log_id, formatted)
+            self.call_from_thread(self.finish_build_agent, ident, process.wait())
+        except OSError as exc:
+            self.call_from_thread(self.append_agent_log, log_id, f"[red]{escape(str(exc))}[/red]")
+            self.call_from_thread(self.finish_build_agent, ident, 1)
+
+    def finish_build_agent(self, ident: str, exit_code: int) -> None:
+        self.active_builds.discard(ident)
+        status = (f"Agent exited ({exit_code}). Review its build and verification output; "
+                  "Codex exit status alone does not prove a successful build.")
+        key = uuid.uuid5(uuid.NAMESPACE_URL, ident).hex[:12]
+        self.query_one(f"#build-status-{key}", Static).update(status)
+        self.message(f"Build agent for {ident} exited ({exit_code}); review its Agents pane")
 
     async def start_agent_tab(self, kind: str, ident: str, prompt: str) -> None:
         pane_id = f"agent-{ident}"
@@ -1143,6 +1253,9 @@ class BenchmarkApp(App[None]):
                 self.message(f"Codex preparation session exited ({exit_code}); suite {suite_id}: {status}")
             else:
                 self.message(f"Run agent exited with status {exit_code}; review its results")
+            return
+        if info[0] == "build":
+            self.finish_build_agent(info[1], exit_code)
             return
         _, kind, ident = info
         if get_request(ident)["status"] != "pending":

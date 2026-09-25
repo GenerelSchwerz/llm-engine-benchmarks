@@ -33,6 +33,58 @@ from start_codex import make_prompt  # noqa: E402
 
 
 class SetupTest(unittest.TestCase):
+    def test_build_selected_starts_one_pane_per_git_engine(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            db = Path(temp) / "catalog.sqlite3"
+            first = tui_data.save_engine({"label": "First", "type": "git", "locator": "https://example.org/one.git"}, db)
+            second = tui_data.save_engine({"label": "Second", "type": "git", "locator": "https://example.org/two.git"}, db)
+            remote = tui_data.save_engine({"label": "Remote", "type": "remote", "locator": "service"}, db)
+            patches = [
+                patch.object(tui, "migrate_old_files", lambda: None),
+                patch.object(tui, "list_engines", lambda: tui_data.list_engines(db)),
+                patch.object(tui, "list_models", lambda: tui_data.list_models(db)),
+                patch.object(tui, "load_state", lambda: tui_data.load_state(db)),
+                patch.object(tui, "save_state", lambda state: tui_data.save_state(state, db)),
+                patch.object(tui.BenchmarkApp, "embedded_terminal_available", lambda _self: True),
+                patch.object(tui.shutil, "which", lambda program: "/usr/bin/codex" if program == "codex" else None),
+                patch.object(tui, "embedded_codex_command", lambda prompt: (["codex"], None)),
+                patch.object(tui, "CodexTerminal", lambda command, id: Terminal(
+                    command=["sh", "-c", "sleep 0.2"], id=id)),
+            ]
+            for item in patches:
+                item.start()
+            try:
+                async def exercise():
+                    app = tui.BenchmarkApp()
+                    app._filters = [item for item in app._filters if not isinstance(item, Monochrome)]
+                    async with app.run_test(size=(100, 35)) as pilot:
+                        picker = app.query_one("#engine-list", SelectionList)
+                        for ident in (first, second, remote):
+                            picker.select(ident)
+                        app.launch_builds()
+                        for _ in range(30):
+                            await asyncio.sleep(0.01)
+                            await pilot.pause()
+                            if len(app.query("#agent-tabs TabPane")) >= 3:
+                                break
+                        self.assertEqual(app.query_one("#main-tabs", TabbedContent).active, "agents")
+                        self.assertEqual(len(app.query("#agent-tabs TabPane")), 3)
+                        self.assertEqual(app.active_builds, {first, second})
+                        self.assertIn("Build the selected Git engine", tui.make_build_prompt(app.engines[0]))
+                        for _ in range(60):
+                            await asyncio.sleep(0.01)
+                            await pilot.pause()
+                            if not app.active_builds:
+                                break
+                        self.assertFalse(app.active_builds)
+                        self.assertEqual(len([node for node in app.query("#agent-tabs Static")
+                                              if node.id and node.id.startswith("build-status-")]), 2)
+
+                asyncio.run(exercise())
+            finally:
+                for item in reversed(patches):
+                    item.stop()
+
     def test_existing_update_and_removal_catalog_commands(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             db = Path(temp) / "catalog.sqlite3"
