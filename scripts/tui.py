@@ -4,6 +4,7 @@
 import asyncio
 import json
 import os
+import signal
 import shlex
 import shutil
 import sqlite3
@@ -209,6 +210,8 @@ class BenchmarkApp(App[None]):
         self.active_requests: set[str] = set()
         self.active_builds: set[str] = set()
         self.terminals: dict[str, tuple[str, ...]] = {}
+        self.background_processes: dict[str, subprocess.Popen] = {}
+        self.closed_logs: set[str] = set()
         self.result_rows: list[dict] = []
         self.tmux_sockets: dict[str, tuple[str, str]] = {}
         self.tmux_missing: dict[str, int] = {}
@@ -286,9 +289,73 @@ class BenchmarkApp(App[None]):
                     self.log.error(f"Could not finalize setup request {info[2]}: {exc}")
         for terminal_id in list(self.tmux_sockets):
             self.cleanup_tmux(terminal_id)
+        for process in list(self.background_processes.values()):
+            self.stop_background_process(process)
 
     def action_focus_agent_tabs(self) -> None:
         self.query_one("#agent-tabs Tabs", Tabs).focus()
+
+    def track_background_process(self, log_id: str, process: subprocess.Popen) -> None:
+        self.background_processes[log_id] = process
+        if log_id in self.closed_logs:
+            self.stop_background_process(process)
+
+    @staticmethod
+    def stop_background_process(process: subprocess.Popen) -> None:
+        if process.poll() is not None:
+            return
+        if os.name == "posix" and getattr(process, "pid", None):
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                return
+            except OSError:
+                pass
+        process.terminate()
+
+    async def close_selected_agent(self) -> None:
+        tabs = self.query_one("#agent-tabs", TabbedContent)
+        pane_id = tabs.active
+        if not pane_id or pane_id == "agent-overview":
+            raise ValueError("Select an agent pane to close")
+        pane = tabs.query_one(f"#{pane_id}", TabPane)
+        terminals = list(pane.query(CodexTerminal))
+        terminal_process = terminals[0].board.process if terminals else None
+        if terminals:
+            self.finish_embedded_terminal(terminals[0].id, 130)
+        else:
+            logs = list(pane.query(RichLog))
+            if logs:
+                log_id = logs[0].id
+                self.closed_logs.add(log_id)
+                process = self.background_processes.get(log_id)
+                if process:
+                    self.stop_background_process(process)
+            if pane_id.startswith("agent-"):
+                ident = pane_id.removeprefix("agent-")
+                request = get_request(ident)
+                if request["status"] == "pending":
+                    resolve_request(ident, "canceled", "Agent pane closed before setup completed.")
+                self.active_requests.discard(ident)
+                self.refresh_request(request["kind"])
+            elif pane_id.startswith("build-agent-"):
+                key = pane_id.removeprefix("build-agent-")
+                for ident in list(self.active_builds):
+                    if uuid.uuid5(uuid.NAMESPACE_URL, ident).hex[:12] == key:
+                        self.active_builds.discard(ident)
+            elif pane_id.startswith(("run-agent-", "suite-agent-run-")):
+                self.active_run_machine = False
+        await tabs.remove_pane(pane_id)
+        if terminal_process is not None:
+            try:
+                await asyncio.to_thread(terminal_process.wait, timeout=2)
+            except subprocess.TimeoutExpired:
+                terminal_process.terminate()
+                try:
+                    await asyncio.to_thread(terminal_process.wait, timeout=2)
+                except subprocess.TimeoutExpired:
+                    terminal_process.kill()
+                    await asyncio.to_thread(terminal_process.wait)
+        self.message(f"Closed {pane_id}; saved results remain available")
 
     def action_clear_edit(self) -> None:
         for kind in ("engine", "model"):
@@ -456,6 +523,7 @@ class BenchmarkApp(App[None]):
                 yield Input(id="result-question", placeholder="Optional first question for Codex")
                 yield RichLog(id="result-findings", highlight=True, markup=True, wrap=True)
             with TabPane("Agents", id="agents"):
+                yield Button("Close selected agent", id="agent-close", variant="warning")
                 with TabbedContent(id="agent-tabs"):
                     with TabPane("Overview", id="agent-overview"):
                         yield Static("Agent output appears here while setup requests run.")
@@ -676,13 +744,16 @@ class BenchmarkApp(App[None]):
         try:
             process = subprocess.Popen(["codex", "exec", "--json", "-C", str(ROOT), prompt],
                                        cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                       text=True, bufsize=1)
+                                       text=True, bufsize=1, start_new_session=os.name == "posix")
+            self.track_background_process(log_id, process)
             assert process.stdout is not None
             for line in process.stdout:
                 formatted = self.format_agent_event(line)
                 if formatted:
                     self.call_from_thread(self.append_agent_log, log_id, formatted)
-            self.call_from_thread(self.finish_results_agent, key, process.wait())
+            code = process.wait()
+            self.background_processes.pop(log_id, None)
+            self.call_from_thread(self.finish_results_agent, key, code)
         except OSError as exc:
             self.call_from_thread(self.append_agent_log, log_id, f"[red]{escape(str(exc))}[/red]")
             self.call_from_thread(self.finish_results_agent, key, 1)
@@ -1054,6 +1125,8 @@ class BenchmarkApp(App[None]):
                 self.message(f"Cleared {count} completed {kind} setup notice(s)")
             elif action == "engine-build":
                 self.launch_builds()
+            elif action == "agent-close":
+                self.run_worker(self.close_selected_agent(), name="close-agent")
             elif action == "result-refresh":
                 self.refresh_results()
             elif action == "result-pull":
@@ -1235,7 +1308,7 @@ class BenchmarkApp(App[None]):
         ident = engine["id"]
         key = uuid.uuid5(uuid.NAMESPACE_URL, ident).hex[:12]
         pane_id = f"build-agent-{key}"
-        log_id = f"build-log-{key}"
+        log_id = f"build-log-{key}-{uuid.uuid4().hex[:8]}"
         terminal_id = f"build-terminal-{uuid.uuid4().hex[:12]}"
         status_id = f"build-status-{key}"
         tabs = self.query_one("#agent-tabs", TabbedContent)
@@ -1276,13 +1349,17 @@ class BenchmarkApp(App[None]):
             process = subprocess.Popen(
                 ["codex", "exec", "--json", "-C", str(ROOT), prompt],
                 cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                start_new_session=os.name == "posix",
             )
+            self.track_background_process(log_id, process)
             assert process.stdout is not None
             for line in process.stdout:
                 formatted = self.format_agent_event(line)
                 if formatted:
                     self.call_from_thread(self.append_agent_log, log_id, formatted)
-            self.call_from_thread(self.finish_build_agent, ident, process.wait())
+            code = process.wait()
+            self.background_processes.pop(log_id, None)
+            self.call_from_thread(self.finish_build_agent, ident, code)
         except OSError as exc:
             self.call_from_thread(self.append_agent_log, log_id, f"[red]{escape(str(exc))}[/red]")
             self.call_from_thread(self.finish_build_agent, ident, 1)
@@ -1292,12 +1369,15 @@ class BenchmarkApp(App[None]):
         status = (f"Agent exited ({exit_code}). Review its build and verification output; "
                   "Codex exit status alone does not prove a successful build.")
         key = uuid.uuid5(uuid.NAMESPACE_URL, ident).hex[:12]
+        if not self.query(f"#build-status-{key}"):
+            return
         self.query_one(f"#build-status-{key}", Static).update(status)
         self.message(f"Build agent for {ident} exited ({exit_code}); review its Agents pane")
 
     async def start_agent_tab(self, kind: str, ident: str, prompt: str) -> None:
         pane_id = f"agent-{ident}"
         log_id = f"log-{ident}"
+        self.closed_logs.discard(log_id)
         tabs = self.query_one("#agent-tabs", TabbedContent)
         if self.embedded_terminal_available():
             terminal_id = f"terminal-{ident}"
@@ -1334,7 +1414,8 @@ class BenchmarkApp(App[None]):
         self.run_setup_agent(kind, ident, prompt, log_id)
 
     def append_agent_log(self, log_id: str, value: str) -> None:
-        self.query_one(f"#{log_id}", RichLog).write(value)
+        if log_id not in self.closed_logs and self.query(f"#{log_id}"):
+            self.query_one(f"#{log_id}", RichLog).write(value)
 
     @staticmethod
     def format_agent_event(line: str) -> str | None:
@@ -1397,14 +1478,16 @@ class BenchmarkApp(App[None]):
             try:
                 process = subprocess.Popen(
                     command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, bufsize=1,
+                    text=True, bufsize=1, start_new_session=os.name == "posix",
                 )
+                self.track_background_process(log_id, process)
                 assert process.stdout is not None
                 for line in process.stdout:
                     formatted = self.format_agent_event(line)
                     if formatted:
                         self.call_from_thread(self.append_agent_log, log_id, formatted)
                 code = process.wait()
+                self.background_processes.pop(log_id, None)
                 response = json.loads(response_file.read_text()) if code == 0 and response_file.exists() else None
                 self.call_from_thread(self.finish_setup_agent, kind, ident, log_id, code, response)
             except (OSError, json.JSONDecodeError) as exc:
@@ -1412,7 +1495,7 @@ class BenchmarkApp(App[None]):
 
     def finish_setup_agent(self, kind: str, ident: str, log_id: str,
                            code: int, response: dict | None) -> None:
-        if get_request(ident)["status"] in {"ready", "confirmed"}:
+        if get_request(ident)["status"] in {"ready", "confirmed", "canceled"}:
             self.active_requests.discard(ident)
             self.refresh_request(kind)
             return
@@ -1471,6 +1554,7 @@ class BenchmarkApp(App[None]):
             prompt = make_prompt("run", suite_id, engines, models, False, run_id=run_id)
             pane_id = f"run-agent-{run_id}"
             log_id = f"run-log-{run_id}"
+            self.closed_logs.discard(log_id)
             tabs = self.query_one("#agent-tabs", TabbedContent)
             if self.embedded_terminal_available():
                 command, socket = embedded_codex_command(prompt)
@@ -1508,14 +1592,17 @@ class BenchmarkApp(App[None]):
             process = subprocess.Popen(
                 ["codex", "exec", "--json", "-C", str(ROOT), prompt],
                 cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1,
+                text=True, bufsize=1, start_new_session=os.name == "posix",
             )
+            self.track_background_process(log_id, process)
             assert process.stdout is not None
             for line in process.stdout:
                 formatted = self.format_agent_event(line)
                 if formatted:
                     self.call_from_thread(self.append_agent_log, log_id, formatted)
-            self.call_from_thread(self.finish_stored_agent, run_id, process.wait())
+            code = process.wait()
+            self.background_processes.pop(log_id, None)
+            self.call_from_thread(self.finish_stored_agent, run_id, code)
         except OSError as exc:
             self.call_from_thread(self.append_agent_log, log_id, f"[red]{escape(str(exc))}[/red]")
             self.call_from_thread(self.finish_stored_agent, run_id, 1)
@@ -1527,7 +1614,7 @@ class BenchmarkApp(App[None]):
     async def start_suite_tab(self, stage: str, suite_id: str, engines: list[str],
                               models: list[str], check_updates: bool, prompt: str) -> None:
         pane_id = f"suite-agent-{stage}-{suite_id}"
-        log_id = f"suite-log-{stage}-{suite_id}"
+        log_id = f"suite-log-{stage}-{suite_id}-{uuid.uuid4().hex[:8]}"
         tabs = self.query_one("#agent-tabs", TabbedContent)
         if self.embedded_terminal_available():
             try:
@@ -1608,6 +1695,7 @@ class BenchmarkApp(App[None]):
                 self.poll_suite_progress()
                 self.message(f"Codex preparation session exited ({exit_code}); suite {suite_id}: {status}")
             else:
+                self.active_run_machine = False
                 self.message(f"Run agent exited with status {exit_code}; review its results")
             return
         if info[0] == "build":
@@ -1649,20 +1737,24 @@ class BenchmarkApp(App[None]):
             process = subprocess.Popen(
                 ["codex", "exec", "--json", "-C", str(ROOT), prompt],
                 cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1,
+                text=True, bufsize=1, start_new_session=os.name == "posix",
             )
+            self.track_background_process(log_id, process)
             assert process.stdout is not None
             for line in process.stdout:
                 formatted = self.format_agent_event(line)
                 if formatted:
                     self.call_from_thread(self.append_agent_log, log_id, formatted)
             code = process.wait()
+            self.background_processes.pop(log_id, None)
             self.call_from_thread(self.finish_suite_agent, stage, suite_id, log_id, code)
         except (ValueError, OSError) as exc:
             self.call_from_thread(self.append_agent_log, log_id, f"[red]{escape(str(exc))}[/red]")
             self.call_from_thread(self.message, f"{stage} failed: {exc}")
 
     def finish_suite_agent(self, stage: str, suite_id: str, log_id: str, code: int) -> None:
+        if log_id in self.closed_logs:
+            return
         if code:
             self.append_agent_log(log_id, f"[red]Agent process failed with exit status {code}[/red]")
         if stage == "prepare":

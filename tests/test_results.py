@@ -96,6 +96,57 @@ class ResultsTest(unittest.TestCase):
                           lambda _self, _key, prompt, _log: prompts.append(prompt)):
             asyncio.run(exercise())
 
+    def test_close_selected_agent_removes_its_pane(self) -> None:
+        row = {"key": "demo/run-1", "status": "complete", "summary_file": "qualified.json", "mtime": 1}
+        result = {"key": row["key"], "directory": "/tmp/results/demo/run-1",
+                  "summary_file": "qualified.json", "summary": {}, "findings_saved": False}
+        async def exercise():
+            app = tui.BenchmarkApp()
+            async with app.run_test(size=(110, 40)):
+                await app.start_results_agent("demo/run-1", "")
+                tabs = app.query_one("#agent-tabs", TabbedContent)
+                pane_id = tabs.active
+                self.assertNotEqual(pane_id, "agent-overview")
+                log_id = next(iter(tabs.query_one(f"#{pane_id}").query(RichLog))).id
+                class Process:
+                    stopped = False
+                    def poll(self):
+                        return None
+                    def terminate(self):
+                        self.stopped = True
+                process = Process()
+                app.background_processes[log_id] = process
+                await app.close_selected_agent()
+                self.assertTrue(process.stopped)
+                self.assertFalse(app.query(f"#{pane_id}"))
+                self.assertEqual(tabs.active, "agent-overview")
+        with patch.object(tui, "list_results", return_value=[row]), \
+             patch.object(tui, "show_result", return_value=result), \
+             patch.object(tui.BenchmarkApp, "embedded_terminal_available", return_value=False), \
+             patch.object(tui.BenchmarkApp, "run_results_agent", lambda *_args: None):
+            asyncio.run(exercise())
+
+    def test_close_live_terminal_clears_tracking(self) -> None:
+        row = {"key": "demo/run-1", "status": "complete", "summary_file": "qualified.json", "mtime": 1}
+        result = {"key": row["key"], "directory": "/tmp/results/demo/run-1",
+                  "summary_file": "qualified.json", "summary": {}, "findings_saved": False}
+        async def exercise():
+            app = tui.BenchmarkApp()
+            async with app.run_test(size=(110, 40)):
+                await app.start_results_agent("demo/run-1", "")
+                tabs = app.query_one("#agent-tabs", TabbedContent)
+                pane_id = tabs.active
+                self.assertEqual(len(app.terminals), 1)
+                await app.close_selected_agent()
+                self.assertFalse(app.terminals)
+                self.assertFalse(app.query(f"#{pane_id}"))
+        with patch.object(tui, "list_results", return_value=[row]), \
+             patch.object(tui, "show_result", return_value=result), \
+             patch.object(tui.BenchmarkApp, "embedded_terminal_available", return_value=True), \
+             patch.object(tui, "embedded_codex_command",
+                          return_value=(["sh", "-c", "sleep 30"], None)):
+            asyncio.run(exercise())
+
 
 if __name__ == "__main__":
     unittest.main()
