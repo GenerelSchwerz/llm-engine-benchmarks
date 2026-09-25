@@ -6,6 +6,7 @@ import json
 import os
 import shlex
 import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -20,12 +21,13 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import (
-    Button, Checkbox, Footer, Header, Input, Label, RichLog, Select,
+    Button, Checkbox, Footer, Header, Input, Label, RichLog, Select, TextArea,
     OptionList, SelectionList, Static, TabbedContent, TabPane, Tabs,
 )
 from textual_tty import Terminal
 
 from source_manifest import ROOT
+from run_store import clone_setup, create_run, delete_setup, list_setups, save_setup, show_setup
 from start_codex import make_prompt
 from suite_store import create_suite, delete_suite, list_suites, preparation_signal, show_suite, validate_suite
 from tui_data import (
@@ -173,6 +175,8 @@ class BenchmarkApp(App[None]):
     Terminal { height: 1fr; }
     CodexTerminal { height: 1fr; }
     #suite-list { height: 9; border: round $primary; margin-bottom: 1; }
+    #run-setup-list { height: 7; border: round $primary; margin-bottom: 1; }
+    #run-description { height: 6; border: round $primary; margin-bottom: 1; }
     #suite-scroll { height: 1fr; }
     #suite-detail { min-height: 3; color: $text-muted; }
     .request-status { margin: 1 0; }
@@ -189,6 +193,9 @@ class BenchmarkApp(App[None]):
         self.loading = True
         self.pending_delete: tuple[str, str] | None = None
         self.pending_suite_delete: str | None = None
+        self.pending_run_setup_delete: str | None = None
+        self.run_setup_id: str | None = self.state.get("run_setup_id")
+        self.active_run_machine = False
         self.edit_engine_id: str | None = None
         self.edit_model_id: str | None = None
         self.mode = {
@@ -415,8 +422,24 @@ class BenchmarkApp(App[None]):
                     with Horizontal(classes="buttons"):
                         yield Button("Save draft", id="suite-create")
                         yield Button("Prepare with Codex", id="prepare", variant="primary")
-                        yield Button("Run frozen plan", id="run")
                     yield Static("The agent resolves versions, hashes, tokenizer, and per-model commands. Code validates the saved plan.")
+                    yield Label("Run setups", classes="section-title")
+                    yield OptionList(id="run-setup-list")
+                    with Horizontal(classes="buttons"):
+                        yield Button("New", id="run-setup-new")
+                        yield Button("Open", id="run-setup-open")
+                        yield Button("Clone", id="run-setup-clone")
+                        yield Button("Delete", id="run-setup-delete", variant="error")
+                    yield Label("Setup name", classes="field-label")
+                    yield Input(id="run-setup-name", placeholder="e.g. 8 GiB placement sweep")
+                    yield Label("VRAM ceiling in GiB (optional)", classes="field-label")
+                    yield Input(id="run-vram-ceiling", placeholder="e.g. 8 or 12")
+                    yield Label("Run description and instructions (optional)", classes="field-label")
+                    yield TextArea("", id="run-description")
+                    with Horizontal(classes="buttons"):
+                        yield Button("Save setup", id="run-setup-save", variant="success")
+                        yield Button("Run frozen plan", id="run", variant="primary")
+                    yield Static("Edit a saved setup freely. Each launch keeps an immutable copy of its instructions.")
             with TabPane("Agents", id="agents"):
                 with TabbedContent(id="agent-tabs"):
                     with TabPane("Overview", id="agent-overview"):
@@ -430,6 +453,9 @@ class BenchmarkApp(App[None]):
         self.refresh_models()
         self.refresh_suites()
         self.query_one("#suite-id", Input).value = self.state.get("suite_id", "")
+        self.refresh_run_setups()
+        if self.run_setup_id and any(row["id"] == self.run_setup_id for row in self.run_setup_rows):
+            self.open_run_setup()
         self.query_one("#check-updates", Checkbox).value = bool(self.state.get("check_updates", False))
         self.loading = False
         self.update_modes()
@@ -469,6 +495,7 @@ class BenchmarkApp(App[None]):
         self.state = {
             "engines": self.selected("#engine-list"), "models": self.selected("#model-list"),
             "suite_id": self.value("suite-id"),
+            "run_setup_id": self.run_setup_id,
             "check_updates": self.query_one("#check-updates", Checkbox).value,
             "engine_mode": self.mode["engine"], "model_mode": self.mode["model"],
         }
@@ -520,10 +547,14 @@ class BenchmarkApp(App[None]):
         if event.option_list.id == "suite-list":
             self.pending_suite_delete = None
             self.show_suite_detail()
+        elif event.option_list.id == "run-setup-list":
+            self.pending_run_setup_delete = None
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         if event.option_list.id == "suite-list":
             self.open_suite()
+        elif event.option_list.id == "run-setup-list":
+            self.open_run_setup()
 
     def open_suite(self) -> None:
         ident = self.highlighted_suite()
@@ -542,6 +573,8 @@ class BenchmarkApp(App[None]):
                 if any(option.value == item for option in picker.options):
                     picker.select(item)
         self.query_one("#suite-id", Input).value = ident
+        self.new_run_setup()
+        self.refresh_run_setups()
         self.query_one("#check-updates", Checkbox).value = bool(data["suite"]["check_updates"])
         self.remember()
         self.poll_suite_progress()
@@ -549,6 +582,8 @@ class BenchmarkApp(App[None]):
 
     def new_suite(self) -> None:
         self.query_one("#suite-id", Input).value = ""
+        self.new_run_setup()
+        self.refresh_run_setups()
         self.pending_suite_delete = None
         self.remember()
         self.poll_suite_progress()
@@ -579,6 +614,99 @@ class BenchmarkApp(App[None]):
             self.new_suite()
         self.refresh_suites()
         self.message(f"Deleted suite {ident}; source files and benchmark artifacts remain")
+
+    def refresh_run_setups(self, select_id: str | None = None) -> None:
+        suite_id = self.value("suite-id")
+        rows = list_setups(suite_id) if suite_id else []
+        self.run_setup_rows = rows
+        picker = self.query_one("#run-setup-list", OptionList)
+        picker.clear_options()
+        for row in rows:
+            ceiling = (f"{row['vram_ceiling_gib']:g} GiB" if row["vram_ceiling_gib"] is not None
+                       else "no VRAM ceiling")
+            picker.add_option(f"{row['name']}  ·  {ceiling}")
+        selected = select_id or self.run_setup_id
+        for index, row in enumerate(rows):
+            if row["id"] == selected:
+                picker.highlighted = index
+                return
+
+    def highlighted_run_setup(self) -> str | None:
+        index = self.query_one("#run-setup-list", OptionList).highlighted
+        rows = getattr(self, "run_setup_rows", [])
+        return rows[index]["id"] if index is not None and index < len(rows) else None
+
+    def new_run_setup(self) -> None:
+        self.run_setup_id = None
+        self.pending_run_setup_delete = None
+        self.query_one("#run-setup-list", OptionList).highlighted = None
+        self.query_one("#run-setup-name", Input).value = ""
+        self.query_one("#run-vram-ceiling", Input).value = ""
+        self.query_one("#run-description", TextArea).text = ""
+        self.remember()
+        self.message("New run setup; enter a name to save it")
+
+    def open_run_setup(self) -> None:
+        ident = self.highlighted_run_setup()
+        if ident is None:
+            raise ValueError("Select a saved run setup")
+        row = show_setup(ident)
+        if row["suite_id"] != self.value("suite-id"):
+            raise ValueError("Run setup belongs to another suite")
+        self.run_setup_id = ident
+        self.query_one("#run-setup-name", Input).value = row["name"]
+        self.query_one("#run-vram-ceiling", Input).value = (
+            f"{row['vram_ceiling_gib']:g}" if row["vram_ceiling_gib"] is not None else "")
+        self.query_one("#run-description", TextArea).text = row["description"]
+        self.pending_run_setup_delete = None
+        self.remember()
+        self.message(f"Opened run setup {row['name']}")
+
+    def save_run_setup(self) -> str:
+        ceiling = self.value("run-vram-ceiling")
+        description = self.query_one("#run-description", TextArea).text
+        name = self.value("run-setup-name") or (
+            f"{ceiling} GiB run" if ceiling else
+            next((line.strip()[:80] for line in description.splitlines() if line.strip()), "Run setup"))
+        self.query_one("#run-setup-name", Input).value = name
+        ident = save_setup(self.value("suite-id"), name, ceiling, description, self.run_setup_id)
+        self.run_setup_id = ident
+        self.refresh_run_setups(ident)
+        self.remember()
+        self.message(f"Saved run setup {self.value('run-setup-name')}")
+        return ident
+
+    def clone_run_setup(self) -> None:
+        source = self.highlighted_run_setup() or self.run_setup_id
+        if source is None:
+            raise ValueError("Select a saved run setup to clone")
+        ident = clone_setup(source)
+        self.refresh_run_setups(ident)
+        self.open_run_setup()
+        self.query_one("#run-setup-name", Input).focus()
+        self.message("Cloned setup; edit the copy and save your changes")
+
+    def remove_run_setup(self) -> None:
+        ident = self.highlighted_run_setup()
+        if ident is None:
+            raise ValueError("Select a saved run setup to delete")
+        if self.pending_run_setup_delete != ident:
+            self.pending_run_setup_delete = ident
+            self.message("Press Delete again to remove this run setup; launched run snapshots remain")
+            return
+        delete_setup(ident)
+        self.pending_run_setup_delete = None
+        if self.run_setup_id == ident:
+            self.new_run_setup()
+        self.refresh_run_setups()
+        self.message("Run setup deleted; launched run snapshots remain")
+
+    def run_setup_for_launch(self) -> str | None:
+        description = self.query_one("#run-description", TextArea).text
+        if (self.run_setup_id or self.value("run-setup-name") or
+                self.value("run-vram-ceiling") or description.strip()):
+            return self.save_run_setup()
+        return self.highlighted_run_setup()
 
     def refresh_engines(self, editor_id: str | None = None) -> None:
         previous = set(self.selected("#engine-list"))
@@ -753,6 +881,8 @@ class BenchmarkApp(App[None]):
         if event.input.id == "suite-id":
             self.remember()
             self.poll_suite_progress()
+            self.new_run_setup()
+            self.refresh_run_setups()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         action = event.button.id
@@ -799,6 +929,16 @@ class BenchmarkApp(App[None]):
                 self.remove_suite()
             elif action == "suite-create":
                 self.save_suite_draft()
+            elif action == "run-setup-new":
+                self.new_run_setup()
+            elif action == "run-setup-open":
+                self.open_run_setup()
+            elif action == "run-setup-clone":
+                self.clone_run_setup()
+            elif action == "run-setup-save":
+                self.save_run_setup()
+            elif action == "run-setup-delete":
+                self.remove_run_setup()
             elif action and action.startswith("transcript-"):
                 terminal = self.query_one(f"#{action.removeprefix('transcript-')}", CodexTerminal)
                 terminal.toggle_transcript()
@@ -935,7 +1075,7 @@ class BenchmarkApp(App[None]):
         pending = [item for item in engines if item["id"] not in self.active_builds]
         if not pending:
             raise ValueError("No selected Git engines to start; non-Git engines cannot be built and active builds are already running")
-        if any(info[0] == "suite" and info[1] == "run" for info in self.terminals.values()):
+        if self.active_run_machine or any(info[0] == "suite" and info[1] == "run" for info in self.terminals.values()):
             raise ValueError("Close the active suite run before starting builds on this machine")
         self.query_one("#main-tabs", TabbedContent).active = "agents"
         for item in pending:
@@ -1163,10 +1303,81 @@ class BenchmarkApp(App[None]):
             raise ValueError("Enter a suite name and select at least one engine and model")
         if shutil.which("codex") is None:
             raise ValueError("Codex CLI is not installed or not on PATH")
+        if stage == "run":
+            if self.active_run_machine:
+                raise ValueError("A suite run is already active on this machine")
+            setup_id = self.run_setup_for_launch()
+            self.active_run_machine = True
+            self.run_worker(self.start_run_tab(suite_id, engines, models, setup_id),
+                            name=f"run-{suite_id}")
+            return
         check_updates = self.query_one("#check-updates", Checkbox).value if stage == "prepare" else False
         prompt = make_prompt(stage, suite_id, engines, models, check_updates)
         self.run_worker(self.start_suite_tab(stage, suite_id, engines, models, check_updates, prompt),
                         name=f"{stage}-{suite_id}")
+
+    async def start_run_tab(self, suite_id: str, engines: list[str], models: list[str],
+                            setup_id: str | None) -> None:
+        terminal_id = f"run-terminal-{uuid.uuid4().hex[:12]}"
+        try:
+            await asyncio.to_thread(self.preflight_suite, "run", suite_id, engines, models, False)
+            run = create_run(suite_id, setup_id)
+            run_id = run["id"]
+            prompt = make_prompt("run", suite_id, engines, models, False, run_id=run_id)
+            pane_id = f"run-agent-{run_id}"
+            log_id = f"run-log-{run_id}"
+            tabs = self.query_one("#agent-tabs", TabbedContent)
+            if self.embedded_terminal_available():
+                command, socket = embedded_codex_command(prompt)
+                terminal = CodexTerminal(command=command, id=terminal_id)
+                terminal.tmux_mode = socket is not None
+                toolbar = (Static("Mouse wheel: scroll history · q: return to Codex") if socket else
+                           Button("Transcript / scroll history (Ctrl+T)", id=f"transcript-{terminal_id}"))
+                self.terminals[terminal_id] = ("run", run_id)
+                if socket:
+                    self.tmux_sockets[terminal_id] = (command[0], socket)
+                await tabs.add_pane(TabPane(f"run: {run['name']}", toolbar, terminal, id=pane_id))
+                tabs.active = pane_id
+                self.query_one("#main-tabs", TabbedContent).active = "agents"
+                self.query_one(f"#{terminal_id}").focus()
+            else:
+                await tabs.add_pane(TabPane(
+                    f"run: {run['name']}",
+                    RichLog(id=log_id, highlight=True, markup=True, max_lines=500, wrap=True),
+                    id=pane_id,
+                ))
+                tabs.active = pane_id
+                self.query_one("#main-tabs", TabbedContent).active = "agents"
+                self.append_agent_log(log_id, f"[cyan]Starting run {run_id}…[/cyan]")
+                self.run_stored_agent(run_id, prompt, log_id)
+            self.message(f"Run {run_id} started; instructions: uv run scripts/run_store.py show-run {run_id}")
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            self.active_run_machine = False
+            self.cleanup_tmux(terminal_id)
+            self.terminals.pop(terminal_id, None)
+            self.message(f"[red]Run failed to start: {escape(str(exc))}[/red]")
+
+    @work(thread=True)
+    def run_stored_agent(self, run_id: str, prompt: str, log_id: str) -> None:
+        try:
+            process = subprocess.Popen(
+                ["codex", "exec", "--json", "-C", str(ROOT), prompt],
+                cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1,
+            )
+            assert process.stdout is not None
+            for line in process.stdout:
+                formatted = self.format_agent_event(line)
+                if formatted:
+                    self.call_from_thread(self.append_agent_log, log_id, formatted)
+            self.call_from_thread(self.finish_stored_agent, run_id, process.wait())
+        except OSError as exc:
+            self.call_from_thread(self.append_agent_log, log_id, f"[red]{escape(str(exc))}[/red]")
+            self.call_from_thread(self.finish_stored_agent, run_id, 1)
+
+    def finish_stored_agent(self, run_id: str, exit_code: int) -> None:
+        self.active_run_machine = False
+        self.message(f"Run agent {run_id} exited ({exit_code}); review its results")
 
     async def start_suite_tab(self, stage: str, suite_id: str, engines: list[str],
                               models: list[str], check_updates: bool, prompt: str) -> None:
@@ -1256,6 +1467,9 @@ class BenchmarkApp(App[None]):
             return
         if info[0] == "build":
             self.finish_build_agent(info[1], exit_code)
+            return
+        if info[0] == "run":
+            self.finish_stored_agent(info[1], exit_code)
             return
         _, kind, ident = info
         if get_request(ident)["status"] != "pending":

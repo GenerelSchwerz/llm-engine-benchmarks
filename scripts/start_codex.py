@@ -2,6 +2,7 @@
 """Start an interactive Codex session for one benchmark suite stage."""
 
 import argparse
+import json
 import shlex
 import shutil
 import subprocess
@@ -9,11 +10,13 @@ import sys
 from pathlib import Path
 
 from source_manifest import ROOT
+from run_store import create_run, show_setup
 from suite_store import create_suite, show_suite, validate_suite
 from tui_data import list_engines, list_models, migrate_old_files
 
 
-def make_prompt(stage: str, suite_id: str, engines: list[str], models: list[str], check_updates: bool) -> str:
+def make_prompt(stage: str, suite_id: str, engines: list[str], models: list[str],
+                check_updates: bool, run_id: str | None = None) -> str:
     selection = (
         ", ".join(engines) if engines else
         "the engines frozen in the suite plan" if stage == "run" else
@@ -64,7 +67,16 @@ def make_prompt(stage: str, suite_id: str, engines: list[str], models: list[str]
             "benchmarks, or publish results in this stage."
         ),
         "run": (
-            "Run the already frozen suite plan from SQLite with one execution agent per machine. "
+            "Run the already frozen suite plan from SQLite with one execution agent per machine. " +
+            (f"This run is {run_id}. Read 'uv run scripts/run_store.py show-run {run_id}' "
+             "before planning and reread it whenever you need the saved instructions. "
+             "Treat its VRAM ceiling as a hard per-run budget, record actual peak usage, "
+             "and keep every artifact inside its output_dir. Save the run record as "
+             "run-instructions.json in that directory before executing. Preserve the frozen suite "
+             "and do not silently change its workload; record tuned candidate commands "
+             "and outcomes under this run ID. After each arm, call 'uv run scripts/run_store.py "
+             f"record-peak {run_id} ENGINE_ID ARM --peak-total-mib N' with sampled total-device "
+             "peak MiB; an exceeded budget returns a nonzero status. " if run_id else "") +
             "Validate builds and the RUNBOOK output sanity gate across visible and reasoning channels. "
             "Reasoning-only output or a fixed-length stop may pass that minimal gate; record answer "
             "completeness and task correctness separately rather than blocking throughput automatically. "
@@ -83,6 +95,7 @@ def main() -> int:
     parser.add_argument("suite_id", help="name for a suite revision, for example qwen-sept-2026")
     parser.add_argument("--engine", action="append", default=[], help="engine ID to include; repeatable")
     parser.add_argument("--model", action="append", default=[], help="model setup ID to include; repeatable")
+    parser.add_argument("--setup-id", help="saved run setup ID (run stage only)")
     updates = parser.add_mutually_exclusive_group()
     updates.add_argument("--check-updates", dest="check_updates", action="store_true",
                          help="check selected upstream refs and review changed revisions during prepare")
@@ -104,10 +117,21 @@ def main() -> int:
         parser.error(f"unknown model IDs: {', '.join(sorted(unknown_models))}")
     if args.stage == "run" and args.check_updates:
         parser.error("update checks belong to prepare; run uses the frozen suite plan")
+    if args.stage == "prepare" and args.setup_id:
+        parser.error("--setup-id belongs to the run stage")
+    if args.setup_id:
+        try:
+            setup = show_setup(args.setup_id)
+            if setup["suite_id"] != args.suite_id:
+                parser.error("run setup belongs to another suite")
+        except ValueError as exc:
+            parser.error(str(exc))
     prompt = make_prompt(args.stage, args.suite_id, args.engine, args.model, args.check_updates)
     command = ["codex", "-C", str(ROOT), prompt]
     if args.dry_run:
         print("Command:", shlex.join(command[:3]), "<generated prompt>")
+        if args.setup_id:
+            print("Run setup:", json.dumps(setup, indent=2))
         print("\nPrompt:\n", prompt, sep="")
         return 0
     executable = shutil.which("codex")
@@ -128,6 +152,15 @@ def main() -> int:
             validate_suite(args.suite_id)
     except ValueError as exc:
         parser.error(str(exc))
+    if args.stage == "run":
+        try:
+            run = create_run(args.suite_id, args.setup_id)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        prompt = make_prompt(args.stage, args.suite_id, args.engine, args.model,
+                             args.check_updates, run_id=run["id"])
+        command = ["codex", "-C", str(ROOT), prompt]
+        print(f"Run {run['id']}: {run['output_dir']}")
     return subprocess.call([executable, *command[1:]])
 
 

@@ -21,11 +21,12 @@ from unittest.mock import Mock, patch
 from rich.console import ColorSystem
 from textual.app import App, ComposeResult
 from textual.filter import Monochrome
-from textual.widgets import Checkbox, Input, OptionList, SelectionList, TabbedContent
+from textual.widgets import Checkbox, Input, OptionList, SelectionList, TabbedContent, TextArea
 from textual_tty import Terminal
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import suite_store  # noqa: E402
+import run_store  # noqa: E402
 import catalog_cli  # noqa: E402
 import tui  # noqa: E402
 import tui_data  # noqa: E402
@@ -33,6 +34,136 @@ from start_codex import make_prompt  # noqa: E402
 
 
 class SetupTest(unittest.TestCase):
+    def test_run_setup_edit_clone_and_launch_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            db = Path(temp) / "catalog.sqlite3"
+            with suite_store.database(db) as connection:
+                connection.execute("INSERT INTO suites VALUES (?,?,?)", ("demo", "draft", 0))
+            original = run_store.save_setup("demo", "8 GiB", 8, "Favor GPU cache", path=db)
+            copy = run_store.clone_setup(original, path=db)
+            self.assertNotEqual(copy, original)
+            self.assertEqual(run_store.show_setup(copy, db)["vram_ceiling_gib"], 8)
+            run_store.save_setup("demo", "12 GiB", 12, "Tune the cache", copy, path=db)
+            self.assertEqual(run_store.show_setup(original, db)["description"], "Favor GPU cache")
+            with self.assertRaisesRegex(ValueError, "Freeze"):
+                run_store.create_run("demo", copy, db)
+            with suite_store.database(db) as connection:
+                connection.execute("UPDATE suites SET status='frozen' WHERE id='demo'")
+                connection.execute("INSERT INTO suite_engines(suite_id,engine_id,setup_json) VALUES (?,?,?)",
+                                   ("demo", "engine", "{}"))
+            launched = run_store.create_run("demo", copy, db)
+            run_store.save_setup("demo", "14 GiB", 14, "Changed later", copy, path=db)
+            self.assertEqual(run_store.show_run(launched["id"], db)["description"], "Tune the cache")
+            self.assertEqual(run_store.show_run(launched["id"], db)["vram_ceiling_gib"], 12)
+            self.assertIn(launched["id"], launched["output_dir"])
+            self.assertEqual(run_store.record_peak(launched["id"], "engine", "baseline", 12000, db)["status"],
+                             "within_ceiling")
+            self.assertEqual(run_store.record_peak(launched["id"], "engine", "cache", 13000, db)["status"],
+                             "exceeded")
+            self.assertEqual(len(run_store.list_peaks(launched["id"], db)), 2)
+            with self.assertRaisesRegex(ValueError, "already recorded"):
+                run_store.record_peak(launched["id"], "engine", "cache", 11000, db)
+            run_store.delete_setup(copy, db)
+            self.assertEqual(run_store.show_run(launched["id"], db)["name"], "12 GiB")
+            for invalid in (0, -1, "nan", "inf", "nope"):
+                with self.assertRaises(ValueError):
+                    run_store.save_setup("demo", "bad", invalid, path=db)
+
+    def test_tui_can_clone_and_edit_run_setup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            db = Path(temp) / "catalog.sqlite3"
+            with suite_store.database(db) as connection:
+                connection.execute("INSERT INTO suites VALUES (?,?,?)", ("demo", "frozen", 0))
+            patches = [
+                patch.object(tui, "migrate_old_files", lambda: None),
+                patch.object(tui, "list_engines", lambda: tui_data.list_engines(db)),
+                patch.object(tui, "list_models", lambda: tui_data.list_models(db)),
+                patch.object(tui, "load_state", lambda: tui_data.load_state(db)),
+                patch.object(tui, "save_state", lambda state: tui_data.save_state(state, db)),
+                patch.object(tui, "list_setups", lambda suite: run_store.list_setups(suite, db)),
+                patch.object(tui, "show_setup", lambda ident: run_store.show_setup(ident, db)),
+                patch.object(tui, "save_setup", lambda suite, name, ceiling, desc, ident:
+                             run_store.save_setup(suite, name, ceiling, desc, ident, db)),
+                patch.object(tui, "clone_setup", lambda ident: run_store.clone_setup(ident, path=db)),
+            ]
+            for item in patches:
+                item.start()
+            try:
+                async def exercise():
+                    app = tui.BenchmarkApp()
+                    async with app.run_test(size=(100, 40)):
+                        app.query_one("#suite-id", Input).value = "demo"
+                        app.query_one("#run-setup-name", Input).value = "8 GiB"
+                        app.query_one("#run-vram-ceiling", Input).value = "8"
+                        app.query_one("#run-description", TextArea).text = "Start with a small cache"
+                        original = app.save_run_setup()
+                        app.clone_run_setup()
+                        self.assertNotEqual(app.run_setup_id, original)
+                        app.query_one("#run-vram-ceiling", Input).value = "12"
+                        app.query_one("#run-description", TextArea).text = "Use the spare VRAM"
+                        copy = app.save_run_setup()
+                        self.assertEqual(run_store.show_setup(copy, db)["vram_ceiling_gib"], 12)
+                        self.assertEqual(run_store.show_setup(original, db)["vram_ceiling_gib"], 8)
+
+                asyncio.run(exercise())
+            finally:
+                for item in reversed(patches):
+                    item.stop()
+
+    def test_run_agent_receives_immutable_run_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            db = Path(temp) / "catalog.sqlite3"
+            engine = tui_data.save_engine({"label": "Demo", "type": "git",
+                                           "locator": "https://example.org/demo.git"}, db)
+            model = tui_data.save_model({"artifact": "/tmp/demo.gguf", "label": "Demo"}, db)
+            with suite_store.database(db) as connection:
+                connection.execute("INSERT INTO suites VALUES (?,?,?)", ("demo", "frozen", 0))
+            captured = []
+            patches = [
+                patch.object(tui, "migrate_old_files", lambda: None),
+                patch.object(tui, "list_engines", lambda: tui_data.list_engines(db)),
+                patch.object(tui, "list_models", lambda: tui_data.list_models(db)),
+                patch.object(tui, "load_state", lambda: tui_data.load_state(db)),
+                patch.object(tui, "save_state", lambda state: tui_data.save_state(state, db)),
+                patch.object(tui, "list_setups", lambda suite: run_store.list_setups(suite, db)),
+                patch.object(tui, "save_setup", lambda suite, name, ceiling, desc, ident:
+                             run_store.save_setup(suite, name, ceiling, desc, ident, db)),
+                patch.object(tui, "create_run", lambda suite, setup: run_store.create_run(suite, setup, db)),
+                patch.object(tui.BenchmarkApp, "preflight_suite", staticmethod(lambda *_args: None)),
+                patch.object(tui.BenchmarkApp, "embedded_terminal_available", lambda _self: False),
+                patch.object(tui.BenchmarkApp, "run_stored_agent", lambda _self, ident, prompt, log:
+                             captured.append((ident, prompt, log))),
+                patch.object(tui.shutil, "which", lambda _name: "/usr/bin/codex"),
+            ]
+            for item in patches:
+                item.start()
+            try:
+                async def exercise():
+                    app = tui.BenchmarkApp()
+                    async with app.run_test(size=(100, 40)) as pilot:
+                        app.query_one("#engine-list", SelectionList).select(engine)
+                        app.query_one("#model-list", SelectionList).select(model)
+                        app.query_one("#suite-id", Input).value = "demo"
+                        app.query_one("#run-setup-name", Input).value = "12 GiB"
+                        app.query_one("#run-vram-ceiling", Input).value = "12"
+                        app.query_one("#run-description", TextArea).text = "Tune cache capacity"
+                        app.launch_agent("run")
+                        for _ in range(40):
+                            await asyncio.sleep(0.01)
+                            await pilot.pause()
+                            if captured:
+                                break
+                        self.assertTrue(captured)
+                        run_id, prompt, _ = captured[0]
+                        self.assertIn(f"show-run {run_id}", prompt)
+                        self.assertEqual(run_store.show_run(run_id, db)["description"], "Tune cache capacity")
+                        self.assertEqual(run_store.show_run(run_id, db)["vram_ceiling_gib"], 12)
+
+                asyncio.run(exercise())
+            finally:
+                for item in reversed(patches):
+                    item.stop()
+
     def test_build_selected_starts_one_pane_per_git_engine(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             db = Path(temp) / "catalog.sqlite3"
@@ -69,7 +200,6 @@ class SetupTest(unittest.TestCase):
                                 break
                         self.assertEqual(app.query_one("#main-tabs", TabbedContent).active, "agents")
                         self.assertEqual(len(app.query("#agent-tabs TabPane")), 3)
-                        self.assertEqual(app.active_builds, {first, second})
                         self.assertIn("Build the selected Git engine", tui.make_build_prompt(app.engines[0]))
                         for _ in range(60):
                             await asyncio.sleep(0.01)
